@@ -249,33 +249,6 @@ cd AsenaDPI && ./uninstall.sh
 
 ---
 
-## Development / Test (isolated) · İzole test
-
-Test the installer on every distro **without touching your own system** — each run happens
-in a container with its own filesystem and network namespace (your host `nftables`/DNS are
-never touched). Requires Docker or Podman.
-
-Kurucuyu **kendi sistemine dokunmadan** her dağıtımda dene — her test kendi dosya sistemi ve
-network namespace'i olan bir container'da çalışır (host `nftables`/DNS'ine dokunulmaz).
-Docker ya da Podman gerekir.
-
-```bash
-test/distro-test.sh                 # ubuntu · debian · arch · fedora
-test/distro-test.sh ubuntu arch     # only these / sadece bunlar
-test/distro-test.sh kali            # kali too / kali de
-```
-
-It runs `install.sh` in each image and verifies dependencies install, `nfqws` builds, the
-scripts land, and PySide6 imports. For a full **runtime** test (real DPI/DNS bypass), use a
-throwaway VM — packet-level netfilter needs the real network path.
-
-> [!NOTE]
-> Installing on your own machine is additive and safe, but if you already run another
-> zapret/DPI setup, test in a container or VM first to avoid two tools fighting over
-> `nftables`.
-
----
-
 <div align="center">
 
 Built on [zapret](https://github.com/bol-van/zapret) by bol-van · DPI/DNS bypass for Linux · MIT
