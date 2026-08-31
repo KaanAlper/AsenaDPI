@@ -34,21 +34,24 @@ case "$PM" in
   apt)
     export DEBIAN_FRONTEND=noninteractive
     $SUDO apt-get update -y
-    $SUDO apt-get install -y git make gcc nftables curl ca-certificates \
-        libnetfilter-queue-dev iptables \
+    $SUDO apt-get install -y git make gcc nftables curl ca-certificates iptables \
+        zlib1g-dev libcap-dev libnetfilter-queue-dev libnfnetlink-dev libmnl-dev \
         python3 python3-pyside6.qtwidgets python3-pyside6.qtgui python3-pyside6.qtcore \
-        || $SUDO apt-get install -y git make gcc nftables curl libnetfilter-queue-dev iptables python3 python3-pip
+        || $SUDO apt-get install -y git make gcc nftables curl iptables \
+             zlib1g-dev libcap-dev libnetfilter-queue-dev libnfnetlink-dev libmnl-dev python3 python3-pip
     ;;
   pacman)
     $SUDO pacman -Sy --needed --noconfirm git make gcc nftables curl base-devel \
-        libnetfilter_queue pyside6 python
+        zlib libcap libnetfilter_queue libnfnetlink libmnl pyside6 python
     ;;
   dnf)
-    $SUDO dnf install -y git make gcc nftables curl libnetfilter_queue-devel iptables \
+    $SUDO dnf install -y git make gcc nftables curl iptables \
+        zlib-devel libcap-devel libnetfilter_queue-devel libnfnetlink-devel libmnl-devel \
         python3 python3-pyside6 || true
     ;;
   zypper)
-    $SUDO zypper install -y git make gcc nftables curl libnetfilter_queue-devel \
+    $SUDO zypper install -y git make gcc nftables curl \
+        zlib-devel libcap-devel libnetfilter_queue-devel libnfnetlink-devel libmnl-devel \
         python3 python3-pyside6 || true
     ;;
 esac
@@ -70,22 +73,16 @@ else
   $SUDO git clone --depth 1 "$ZAPRET_URL" "$ZAPRET_DIR"
 fi
 
-say "nfqws derleniyor..."
-if $SUDO make -C "$ZAPRET_DIR" nfqws >/dev/null 2>&1 && [ -x "$ZAPRET_DIR/nfq/nfqws" ]; then
+say "nfqws derleniyor (make -C nfq)..."
+if $SUDO make -C "$ZAPRET_DIR/nfq" >/dev/null 2>&1 && [ -x "$ZAPRET_DIR/nfq/nfqws" ]; then
   $SUDO install -m755 "$ZAPRET_DIR/nfq/nfqws" "$BINDIR/nfqws"
   say "nfqws derlendi ✓"
 else
-  say "Derleme olmadi, hazir binary aranıyor..."
-  ARCH="$(uname -m)"
-  case "$ARCH" in
-    x86_64|amd64)  B="$ZAPRET_DIR/binaries/x86_64/nfqws" ;;
-    aarch64|arm64) B="$ZAPRET_DIR/binaries/aarch64/nfqws" ;;
-    armv7l|armhf)  B="$ZAPRET_DIR/binaries/arm/nfqws" ;;
-    *) B="" ;;
-  esac
-  [ -n "$B" ] && [ -x "$B" ] || die "nfqws ne derlendi ne de $ARCH icin hazir binary var."
+  say "Derleme olmadi, repodaki hazir binary aranıyor..."
+  B="$($SUDO find "$ZAPRET_DIR/binaries" -type f -name nfqws 2>/dev/null | head -1)"
+  [ -n "$B" ] || die "nfqws derlenemedi. Eksik gelistirme kutuphanesi olabilir (zlib / libnetfilter_queue / libnfnetlink / libmnl -dev)."
   $SUDO install -m755 "$B" "$BINDIR/nfqws"
-  say "hazir nfqws kuruldu ($ARCH) ✓"
+  say "hazir nfqws kuruldu ✓"
 fi
 [ -x "$ZAPRET_DIR/nfq/nfqws" ] || $SUDO install -Dm755 "$BINDIR/nfqws" "$ZAPRET_DIR/nfq/nfqws"
 
