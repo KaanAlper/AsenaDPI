@@ -52,11 +52,14 @@ networks. AsenaDPI handles both at once:
 
 ### Installation & setup
 
+**One command:**
+
 ```bash
-git clone https://github.com/KaanAlper/AsenaDPI.git
-cd AsenaDPI
-./install.sh          # NOT with sudo — it calls sudo itself
+curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaDPI/master/get.sh | bash
 ```
+
+<sub>Or manually: `git clone https://github.com/KaanAlper/AsenaDPI.git && cd AsenaDPI && ./install.sh`
+— run it **without** sudo; it calls sudo itself.</sub>
 
 The installer detects your distro, installs dependencies, **downloads and builds zapret's
 `nfqws` automatically** (falls back to zapret's prebuilt binary if it can't compile),
@@ -158,11 +161,14 @@ AsenaDPI ikisini birden halleder:
 
 ### Kurulum
 
+**Tek komut:**
+
 ```bash
-git clone https://github.com/KaanAlper/AsenaDPI.git
-cd AsenaDPI
-./install.sh          # sudo İLE DEĞİL — kendisi sudo çağırır
+curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaDPI/master/get.sh | bash
 ```
+
+<sub>Ya da elle: `git clone https://github.com/KaanAlper/AsenaDPI.git && cd AsenaDPI && ./install.sh`
+— **sudo İLE DEĞİL**, kendisi sudo çağırır.</sub>
 
 Kurucu dağıtımını tanır, bağımlılıkları kurar, **zapret'in `nfqws`'ini otomatik indirip
 derler** (derleyemezse zapret'in hazır binary'sine düşer), scriptleri + tray'i kurar,
@@ -240,6 +246,33 @@ Debian · Ubuntu · Kali · Arch · Fedora · openSUSE (`apt`/`pacman`/`dnf`/`zy
 ```bash
 cd AsenaDPI && ./uninstall.sh
 ```
+
+---
+
+## Development / Test (isolated) · İzole test
+
+Test the installer on every distro **without touching your own system** — each run happens
+in a container with its own filesystem and network namespace (your host `nftables`/DNS are
+never touched). Requires Docker or Podman.
+
+Kurucuyu **kendi sistemine dokunmadan** her dağıtımda dene — her test kendi dosya sistemi ve
+network namespace'i olan bir container'da çalışır (host `nftables`/DNS'ine dokunulmaz).
+Docker ya da Podman gerekir.
+
+```bash
+test/distro-test.sh                 # ubuntu · debian · arch · fedora
+test/distro-test.sh ubuntu arch     # only these / sadece bunlar
+test/distro-test.sh kali            # kali too / kali de
+```
+
+It runs `install.sh` in each image and verifies dependencies install, `nfqws` builds, the
+scripts land, and PySide6 imports. For a full **runtime** test (real DPI/DNS bypass), use a
+throwaway VM — packet-level netfilter needs the real network path.
+
+> [!NOTE]
+> Installing on your own machine is additive and safe, but if you already run another
+> zapret/DPI setup, test in a container or VM first to avoid two tools fighting over
+> `nftables`.
 
 ---
 
