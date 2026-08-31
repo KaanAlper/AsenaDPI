@@ -32,27 +32,28 @@ else die "Desteklenen paket yoneticisi yok (apt/pacman/dnf/zypper)."; fi
 say "Bagimliliklar kuruluyor ($PM)..."
 case "$PM" in
   apt)
+    # ZORUNLU build/runtime deps (tek basina -> her zaman kurulur)
     export DEBIAN_FRONTEND=noninteractive
     $SUDO apt-get update -y
-    $SUDO apt-get install -y git make gcc nftables curl ca-certificates iptables \
-        zlib1g-dev libcap-dev libnetfilter-queue-dev libnfnetlink-dev libmnl-dev \
-        python3 python3-pyside6.qtwidgets python3-pyside6.qtgui python3-pyside6.qtcore \
-        || $SUDO apt-get install -y git make gcc nftables curl iptables \
-             zlib1g-dev libcap-dev libnetfilter-queue-dev libnfnetlink-dev libmnl-dev python3 python3-pip
+    $SUDO apt-get install -y git make gcc nftables curl ca-certificates iptables python3 python3-pip \
+        zlib1g-dev libcap-dev libnetfilter-queue-dev libnfnetlink-dev libmnl-dev
+    # PySide6 apt'te (Debian'da olabilir; Ubuntu 24.04'te YOK -> pip fallback yakalar) - best-effort
+    $SUDO apt-get install -y python3-pyside6.qtwidgets python3-pyside6.qtgui python3-pyside6.qtcore 2>/dev/null || true
     ;;
   pacman)
     $SUDO pacman -Sy --needed --noconfirm git make gcc nftables curl base-devel \
-        zlib libcap libnetfilter_queue libnfnetlink libmnl pyside6 python
+        zlib libcap libnetfilter_queue libnfnetlink libmnl python
+    $SUDO pacman -S --needed --noconfirm pyside6 2>/dev/null || true
     ;;
   dnf)
-    $SUDO dnf install -y git make gcc nftables curl iptables \
-        zlib-devel libcap-devel libnetfilter_queue-devel libnfnetlink-devel libmnl-devel \
-        python3 python3-pyside6 || true
+    $SUDO dnf install -y git make gcc nftables curl iptables python3 python3-pip \
+        zlib-devel libcap-devel libnetfilter_queue-devel libnfnetlink-devel libmnl-devel
+    $SUDO dnf install -y python3-pyside6 2>/dev/null || true
     ;;
   zypper)
-    $SUDO zypper install -y git make gcc nftables curl \
-        zlib-devel libcap-devel libnetfilter_queue-devel libnfnetlink-devel libmnl-devel \
-        python3 python3-pyside6 || true
+    $SUDO zypper install -y git make gcc nftables curl python3 python3-pip \
+        zlib-devel libcap-devel libnetfilter_queue-devel libnfnetlink-devel libmnl-devel
+    $SUDO zypper install -y python3-pyside6 2>/dev/null || true
     ;;
 esac
 
