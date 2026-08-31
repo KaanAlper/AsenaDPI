@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# AsenaDPI OFF — nfqws durdur + nft tablosunu kaldir + DNS'i geri al. Sonrasi tamamen NATIVE.
+STATE=/run/asena-dpi
+
+# temiz DNS (DoT) override'ini geri al (DHCP/varsayilan) -> fail-safe
+if command -v resolvectl >/dev/null 2>&1; then
+    DNSDEV=$(cat "$STATE/dnsdev" 2>/dev/null)
+    [ -z "$DNSDEV" ] && DNSDEV=$(ip -4 route show default | awk '{print $5; exit}')
+    [ -n "$DNSDEV" ] && resolvectl revert "$DNSDEV" 2>/dev/null || true
+    resolvectl flush-caches 2>/dev/null || true
+fi
+
+[ -f "$STATE/pid" ] && kill "$(cat "$STATE/pid")" 2>/dev/null || true
+pkill -x nfqws 2>/dev/null || true
+nft delete table inet asena_dpi 2>/dev/null || true
+rm -rf "$STATE"
+echo "AsenaDPI OFF (DNS geri alindi)"

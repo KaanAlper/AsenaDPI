@@ -1,0 +1,12 @@
+#!/bin/bash
+# /etc/NetworkManager/dispatcher.d/90-asena-dpi
+# Ag degisince (WiFi reconnect / yeni ag / VPN) AsenaDPI'i (DNS+DPI) yeniden uygular.
+# YALNIZ AsenaDPI ACIKKEN devreye girer (/run/asena-dpi/active). Kapaliysa dokunmaz.
+IFACE="$1"; ACTION="$2"
+[ -e /run/asena-dpi/active ] || exit 0
+case "$ACTION" in
+    up|dhcp4-change|dhcp6-change|connectivity-change|vpn-up)
+        /usr/local/bin/asena-dpi-on >>/var/log/asena-dpi.log 2>&1 &
+        ;;
+esac
+exit 0

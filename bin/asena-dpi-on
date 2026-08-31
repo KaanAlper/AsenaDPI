@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# AsenaDPI ON — nfqws (fake/desync) + nftables queue BYPASS + temiz DNS (DoT).
+#   FAIL-SAFE: queue 'bypass' -> nfqws olsa da olmasa da paketler NORMAL gecer. Daemon
+#   coker/durursa internet GITMEZ, IP reset gerekmez.
+#   Iki sansur turunu birden asar: DPI (SNI-RST) -> nfqws desync;  DNS zehri -> DoT 1.1.1.1.
+#   http (80) + http2 (443/TCP) + http3/QUIC (443/UDP). Tunel/proxy YOK.
+#   Kullanim: sudo asena-dpi-on   (kapat: sudo asena-dpi-off)
+set -e
+
+QNUM=200
+FWMARK=0x40000000
+NFQWS="${NFQWS:-/usr/local/bin/nfqws}"
+USER_NAME="${SUDO_USER:-$(id -nu 1000)}"
+USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
+CFG="$USER_HOME/.config/asena-dpi"
+HOSTLIST="$CFG/blacklist.txt"
+STATE=/run/asena-dpi
+
+[ -x "$NFQWS" ] || { echo "HATA: nfqws yok: $NFQWS (once install.sh calistir)" >&2; exit 1; }
+[ -f "$HOSTLIST" ] || { echo "HATA: blacklist yok: $HOSTLIST" >&2; exit 1; }
+mkdir -p "$STATE"
+
+# --- ayarlar (tray yazar) ---
+MODE=blacklist; HTTP=1; HTTP2=1; HTTP3=bypass; DNS=doh
+SETTINGS="$CFG/settings.conf"
+[ -f "$SETTINGS" ] && . "$SETTINGS"
+case "$HTTP3" in 1) HTTP3=bypass ;; 0) HTTP3=off ;; esac   # geri uyum
+
+# hostlist'i nfqws icin temizle (*. ve #yorum kaldir; subdomainler otomatik eslenir)
+CLEAN="$STATE/hostlist.txt"
+sed -e 's/#.*//' -e 's/\r//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^\*\.//' "$HOSTLIST" \
+    | grep -F '.' | sort -u > "$CLEAN"
+
+# TCP 443 (http2) desync stratejisi: config'ten (blockcheck/optimize yazar), yoksa saglam varsayilan
+STRAT_FILE="$CFG/tcp443.conf"
+if [ -f "$STRAT_FILE" ] && grep -qvE '^#|^[[:space:]]*$' "$STRAT_FILE"; then
+    TCP443="$(grep -vE '^#|^[[:space:]]*$' "$STRAT_FILE" | head -1)"
+else
+    TCP443="--dpi-desync=fakedsplit --dpi-desync-fooling=md5sig --dpi-desync-split-pos=1"
+fi
+
+# blacklist modda hostlist filtresi; full modda YOK (tum trafik)
+HL=()
+[ "$MODE" = full ] || HL=(--hostlist="$CLEAN")
+
+# --- nft kurallari ---
+TCP_PORTS=""
+[ "$HTTP" = 1 ]  && TCP_PORTS="80"
+[ "$HTTP2" = 1 ] && TCP_PORTS="${TCP_PORTS:+$TCP_PORTS, }443"
+NFT_TCP=""; NFT_UDP=""
+[ -n "$TCP_PORTS" ] && NFT_TCP="meta l4proto tcp tcp dport { $TCP_PORTS } ct original packets 1-8 queue num $QNUM bypass"
+case "$HTTP3" in
+  bypass) NFT_UDP="meta l4proto udp udp dport 443 ct original packets 1-8 queue num $QNUM bypass" ;;
+  block)  NFT_UDP="meta l4proto udp udp dport 443 drop" ;;   # QUIC engelle -> TCP'ye dus (eduroam/oyun)
+esac
+
+nft -f - <<EOF
+table inet asena_dpi
+delete table inet asena_dpi
+table inet asena_dpi {
+  chain raw_out {
+    type filter hook output priority raw; policy accept;
+    meta mark and $FWMARK != 0 notrack
+  }
+  chain post {
+    type filter hook postrouting priority mangle; policy accept;
+    meta mark and $FWMARK != 0 return
+    $NFT_TCP
+    $NFT_UDP
+  }
+}
+EOF
+
+# --- nfqws args ---
+NF=()
+[ "$HTTP" = 1 ]  && NF+=(--filter-tcp=80 --dpi-desync=fake,multisplit --dpi-desync-split-pos=method+2 --dpi-desync-fooling=md5sig "${HL[@]}" --new)
+[ "$HTTP2" = 1 ] && NF+=(--filter-tcp=443 $TCP443 "${HL[@]}" --new)
+[ "$HTTP3" = bypass ] && NF+=(--filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6 "${HL[@]}" --new)
+[ ${#NF[@]} -gt 0 ] && [ "${NF[${#NF[@]}-1]}" = "--new" ] && unset 'NF[${#NF[@]}-1]'
+
+# idempotent: eski nfqws'i durdur (ag-degisikliginde reapply -> yiginlama olmasin)
+pkill -x nfqws 2>/dev/null || true
+touch "$STATE/active"
+if [ ${#NF[@]} -eq 0 ]; then
+    echo "$$" > "$STATE/pid"
+else
+    "$NFQWS" --daemon --qnum=$QNUM "${NF[@]}" >/var/log/asena-dpi.log 2>&1 &
+    echo $! > "$STATE/pid"
+fi
+
+# --- Temiz DNS (DoT) — ISP DNS zehrini atla ---
+if [ "$DNS" != system ] && command -v resolvectl >/dev/null 2>&1; then
+    DNSDEV=$(ip -4 route show default | awk '{print $5; exit}')
+    if [ -n "$DNSDEV" ]; then
+        echo "$DNSDEV" > "$STATE/dnsdev"
+        resolvectl dns "$DNSDEV" 1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com 2>/dev/null || true
+        resolvectl dnsovertls "$DNSDEV" yes 2>/dev/null || true
+        resolvectl domain "$DNSDEV" '~.' 2>/dev/null || true
+        resolvectl flush-caches 2>/dev/null || true
+        # FAIL-CLOSED KORUMASI: DoT bu agda calismiyorsa DNS'i geri al (internet gitmesin)
+        if ! resolvectl query -4 cloudflare.com >/dev/null 2>&1; then
+            resolvectl revert "$DNSDEV" 2>/dev/null || true
+            resolvectl flush-caches 2>/dev/null || true
+            rm -f "$STATE/dnsdev"
+            echo "UYARI: DoT bu agda calismiyor -> DNS DHCP'ye geri alindi (internet korundu)." >&2
+        fi
+    fi
+fi
+
+PROTOS=""
+[ "$HTTP" = 1 ]  && PROTOS="http "
+[ "$HTTP2" = 1 ] && PROTOS="${PROTOS}http2 "
+case "$HTTP3" in bypass) PROTOS="${PROTOS}http3" ;; block) PROTOS="${PROTOS}quic-ENGELLI" ;; esac
+DNSMSG="DNS=$([ "$DNS" = system ] && echo sistem || echo 'DoT(1.1.1.1)')"
+echo "AsenaDPI ON (mod=$MODE, protokol: ${PROTOS:-yok}, $DNSMSG, $(grep -c . "$CLEAN") host, queue $QNUM bypass=fail-safe)"

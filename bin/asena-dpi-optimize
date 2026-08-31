@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# AsenaDPI OPTIMIZE — zapret 'blockcheck' calistirir, agina EN IYI DPI-desync stratejisini
+# otomatik bulur, tcp443.conf'a yazar ve uygular. Ag degistiginde tekrar calistir.
+#   Kullanim: sudo asena-dpi-optimize [domain1 domain2 ...]   (varsayilan: discord)
+set -e
+
+ZAPRET_BASE="${ZAPRET_BASE:-/usr/local/share/asena-dpi/zapret}"
+BLOCKCHECK="$ZAPRET_BASE/blockcheck.sh"
+export NFQWS="${NFQWS:-$ZAPRET_BASE/nfq/nfqws}"
+[ -f "$BLOCKCHECK" ] || { echo "HATA: blockcheck yok: $BLOCKCHECK (install.sh calistir)" >&2; exit 1; }
+
+USER_NAME="${SUDO_USER:-$(id -nu 1000)}"
+USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
+CFG="$USER_HOME/.config/asena-dpi"
+CONF="$CFG/tcp443.conf"
+mkdir -p "$CFG"
+
+DOMAINS_IN="${*:-discord.com gateway.discord.gg}"
+LOG=$(mktemp)
+
+echo ">> blockcheck calisiyor ($DOMAINS_IN) — birkaç dakika sürebilir..."
+for d in $DOMAINS_IN; do
+  echo "   --- $d ---"
+  yes '' | DOMAINS="$d" ENABLE_HTTP=0 ENABLE_HTTPS_TLS12=1 ENABLE_HTTPS_TLS13=1 \
+    ENABLE_HTTP3=0 SCANLEVEL=standard IPV=4 IPVS=4 REPEATS=2 PARALLEL=0 \
+    timeout 900 "$BLOCKCHECK" 2>&1 | tee -a "$LOG" | grep -E "AVAILABLE|working strategy" >/dev/null || true
+done
+
+# --- en iyi stratejiyi sec (TLS1.3'te calisan + agdan-bagimsiz fooling'i tercih et) ---
+BEST=$(python3 - "$LOG" <<'PY'
+import re, sys
+log = open(sys.argv[1], encoding="utf-8", errors="replace").read().splitlines()
+# yalniz nfqws stratejileri, tls1.3 (Discord 1.3 kullanir) icin AVAILABLE olanlar
+cands = []
+for i, l in enumerate(log):
+    m = re.search(r'curl_test_https_tls13.*nfqws\s+(.*)$', l)
+    if not m:
+        continue
+    # sonraki birkac satirda AVAILABLE var mi?
+    ok = any("AVAILABLE" in log[j] for j in range(i+1, min(i+3, len(log))))
+    if ok:
+        cands.append(m.group(1).strip())
+# SUMMARY blogundaki tls13 nfqws satirlarini da ekle (AVAILABLE isareti tasimaz)
+insum = False
+for l in log:
+    if "* SUMMARY" in l: insum = True
+    if insum:
+        m = re.search(r'curl_test_https_tls13.*nfqws\s+(.*)$', l)
+        if m: cands.append(m.group(1).strip())
+
+def score(s):
+    sc = 0
+    # agdan-bagimsiz (fooling) tercih; autottl/ttl ag-mesafesine bagli (bizim nft'de guvenilmez)
+    if "autottl" in s: sc -= 5
+    if re.search(r'--dpi-desync-ttl=\d', s) and "autottl" not in s: sc -= 1
+    if "fooling=md5sig" in s: sc += 4
+    elif "fooling=badseq" in s: sc += 3
+    elif "fooling=" in s: sc += 2
+    # gercek ClientHello'yu da bolen modlar plain fake'ten saglam
+    if "fakedsplit" in s or "fakeddisorder" in s or "multidisorder" in s: sc += 2
+    # sade olsun (cok parametreli/deneysel olanlari geri it)
+    sc -= s.count("--") * 0.1
+    return sc
+
+# tekille + skorla
+seen, uniq = set(), []
+for c in cands:
+    if c not in seen:
+        seen.add(c); uniq.append(c)
+if not uniq:
+    sys.exit(1)
+uniq.sort(key=score, reverse=True)
+print(uniq[0])
+PY
+) || BEST=""
+
+if [ -z "$BEST" ]; then
+  echo "!! blockcheck calisan nfqws stratejisi bulamadi. Mevcut ayar korunuyor."
+  echo "   (Belki bu agda DPI yok, ya da yalniz DNS zehri var -> DNS=DoT zaten hallediyor.)"
+  rm -f "$LOG"; exit 2
+fi
+
+# yaz + sahiplik
+{
+  echo "# AsenaDPI TCP 443 stratejisi — asena-dpi-optimize (blockcheck) otomatik yazdi."
+  echo "# $(date '+%Y-%m-%d %H:%M') · agdaki en iyi (TLS1.2+1.3): "
+  echo "$BEST"
+} > "$CONF"
+chown "$USER_NAME:$(id -gn "$USER_NAME")" "$CONF" 2>/dev/null || true
+rm -f "$LOG"
+
+echo ">> EN IYI STRATEJI: $BEST"
+echo ">> yazildi: $CONF"
+
+# calisiyorsa uygula
+if [ -e /run/asena-dpi/active ]; then
+  echo ">> uygulaniyor (yeniden baslat)..."
+  /usr/local/bin/asena-dpi-off >/dev/null 2>&1 || true
+  sleep 1
+  /usr/local/bin/asena-dpi-on
+fi

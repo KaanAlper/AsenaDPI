@@ -1,0 +1,6 @@
+# AsenaDPI TCP 443 (TLS/http2) desync stratejisi.
+# 'asena-dpi-optimize' bunu blockcheck ile OTOMATIK doldurur. Elle de yazabilirsin.
+# Ornekler:
+#   --dpi-desync=fakedsplit --dpi-desync-fooling=md5sig --dpi-desync-split-pos=1
+#   --dpi-desync=fake,multidisorder --dpi-desync-split-pos=1,midsld --dpi-desync-fooling=badseq,md5sig
+--dpi-desync=fakedsplit --dpi-desync-fooling=md5sig --dpi-desync-split-pos=1
