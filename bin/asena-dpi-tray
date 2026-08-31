@@ -13,10 +13,10 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame,
+    QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame, QPlainTextEdit,
 )
-from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont
-from PySide6.QtCore import QTimer, Qt, QPointF
+from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont, QTextCursor
+from PySide6.QtCore import QTimer, Qt, QPointF, QProcess
 
 ON = ["sudo", "-n", "/usr/local/bin/asena-dpi-on"]
 OFF = ["sudo", "-n", "/usr/local/bin/asena-dpi-off"]
@@ -199,8 +199,7 @@ class SettingsWindow(QWidget):
         QTimer.singleShot(450, self.update_diff)
 
     def optimize(self):
-        notify("AsenaDPI", "En iyi strateji aranıyor (blockcheck)… birkaç dakika sürebilir.")
-        subprocess.Popen(OPTIMIZE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.tray.optimize()   # tray'in canli konsollu popup'ini ac
 
     def set_pending(self, key, val):
         self.pending[key] = val; self.update_diff()
@@ -247,11 +246,84 @@ class SettingsWindow(QWidget):
         self.show(); self.raise_(); self.activateWindow()
 
 
+class OptimizeWindow(QWidget):
+    """blockcheck'i (asena-dpi-optimize) CANLI konsolla calistiran kucuk popup —
+    arka planda gorunmez calismasin, kullanici ne oldugunu gorsun."""
+    def __init__(self, tray):
+        super().__init__()
+        self.tray = tray
+        self.proc = None
+        self.setWindowTitle("AsenaDPI — En iyi strateji (blockcheck)")
+        self.resize(600, 400)
+        self.setWindowIcon(make_icon(True))
+        self.setStyleSheet(f"""
+            QWidget {{ background:#1b1f27; color:#e6e9ee; font-size:12px; }}
+            QPushButton {{ background:#2a2f37; border:1px solid #3a414c; border-radius:6px; padding:6px 14px; }}
+            QPushButton:hover {{ background:#333a44; }}
+            QPushButton:disabled {{ color:#5b636e; }}
+        """)
+        v = QVBoxLayout(self); v.setContentsMargins(14, 14, 14, 14); v.setSpacing(8)
+        self.status = QLabel("blockcheck çalışıyor… (birkaç dakika sürebilir)")
+        self.status.setStyleSheet("font-weight:bold;")
+        v.addWidget(self.status)
+        self.out = QPlainTextEdit(); self.out.setReadOnly(True)
+        self.out.setStyleSheet("background:#0e1116; color:#b8e0d2; border:1px solid #262c36; "
+                               "border-radius:6px; font-family:monospace; font-size:11px;")
+        v.addWidget(self.out)
+        h = QHBoxLayout(); h.addStretch(1)
+        self.btn_stop = QPushButton("Durdur"); self.btn_stop.clicked.connect(self.stop)
+        self.btn_close = QPushButton("Kapat"); self.btn_close.clicked.connect(self.close)
+        h.addWidget(self.btn_stop); h.addWidget(self.btn_close)
+        v.addLayout(h)
+
+    def run(self):
+        if self.proc and self.proc.state() != QProcess.NotRunning:
+            self.show(); self.raise_(); self.activateWindow(); return
+        self.out.clear()
+        self.status.setText("blockcheck çalışıyor… (birkaç dakika · pencereyi açık tutabilirsin)")
+        self.btn_stop.setEnabled(True)
+        self.show(); self.raise_(); self.activateWindow()
+        self.proc = QProcess(self)
+        self.proc.setProcessChannelMode(QProcess.MergedChannels)
+        self.proc.readyRead.connect(self._read)
+        self.proc.finished.connect(self._done)
+        self.proc.start(OPTIMIZE[0], OPTIMIZE[1:])
+
+    def _read(self):
+        data = bytes(self.proc.readAll()).decode("utf-8", "replace")
+        self.out.moveCursor(QTextCursor.End)
+        self.out.insertPlainText(data)
+        self.out.moveCursor(QTextCursor.End)
+
+    def _done(self, code, _st):
+        self.btn_stop.setEnabled(False)
+        if code == 0:
+            self.status.setText("✅ En iyi strateji bulundu ve uygulandı.")
+        elif code == 2:
+            self.status.setText("ℹ️ Bu ağda DPI stratejisi gerekmedi (DNS/DoT yeterli).")
+        else:
+            self.status.setText(f"Bitti (çıkış kodu {code}).")
+        self.tray.refresh()
+
+    def stop(self):
+        if self.proc and self.proc.state() != QProcess.NotRunning:
+            self.proc.terminate()   # SIGTERM -> blockcheck kendi nft'sini temizler
+            self.status.setText("Durduruldu.")
+            self.btn_stop.setEnabled(False)
+
+    def closeEvent(self, e):
+        # kapatinca calisiyorsa nazikce durdur (blockcheck cleanup yapsin)
+        if self.proc and self.proc.state() != QProcess.NotRunning:
+            self.proc.terminate()
+        e.accept()
+
+
 class AsenaTray:
     def __init__(self, app):
         self.app = app
         self.icon_on = make_icon(True); self.icon_off = make_icon(False)
         self.win = None
+        self.optwin = None
         self.tray = QSystemTrayIcon()
         self.menu = QMenu()
         self.act_toggle = QAction("Bağlan", self.menu); self.act_toggle.triggered.connect(self.toggle)
@@ -281,8 +353,10 @@ class AsenaTray:
         self.win.open_fresh()
 
     def optimize(self):
-        notify("AsenaDPI", "En iyi strateji aranıyor (blockcheck)… birkaç dakika.")
-        subprocess.Popen(OPTIMIZE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # canli konsollu popup (arka planda gorunmez calismasin)
+        if self.optwin is None:
+            self.optwin = OptimizeWindow(self)
+        self.optwin.run()
 
     def on_act(self, reason):
         if reason == QSystemTrayIcon.Trigger:
