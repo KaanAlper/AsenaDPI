@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame, QPlainTextEdit,
+    QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame, QPlainTextEdit, QMessageBox,
 )
 from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont, QTextCursor
 from PySide6.QtCore import QTimer, Qt, QPointF, QProcess
@@ -45,6 +45,17 @@ def run_hidden(args, **kw):
 
 def ps(cmd):
     return run_hidden(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd])
+
+
+_TRAY = None   # QSystemTrayIcon referansi (Windows'ta notify-send yok -> tray balonu)
+
+
+def notify(title, body):
+    try:
+        if _TRAY is not None:
+            _TRAY.showMessage(title, body, QSystemTrayIcon.Information, 5000)
+    except Exception:
+        pass
 
 
 def load_settings() -> dict:
@@ -366,6 +377,7 @@ class AsenaTray:
         self.app = app; self.win = None; self.optwin = None
         self.icon_on = make_icon(True); self.icon_off = make_icon(False)
         self.tray = QSystemTrayIcon(); self.menu = QMenu()
+        global _TRAY; _TRAY = self.tray   # notify() balon bildirimi icin
         self.act_toggle = QAction("Bağlan", self.menu); self.act_toggle.triggered.connect(self.toggle)
         self.menu.addAction(self.act_toggle)
         a_set = QAction("Ayarlar…", self.menu); a_set.triggered.connect(self.open_settings); self.menu.addAction(a_set)
@@ -387,14 +399,18 @@ class AsenaTray:
     def optimize(self):
         # blockcheck.cmd interaktif + kendi elevator'iyla acilir -> KENDI penceresinde calistir
         if not BLOCKCHECK.exists():
-            notify("AsenaDPI", "blockcheck bulunamadi — install.ps1 tekrar calistir.")
+            QMessageBox.warning(None, "AsenaDPI — blockcheck yok",
+                "blockcheck bulunamadı:\n" + str(BLOCKCHECK) + "\n\n"
+                "Muhtemelen install.ps1 tam çalışmadı (bundle kopyalanmadı). "
+                "Yönetici PowerShell'de repo'da tekrar çalıştır:\n"
+                "  cd AsenaDPI\\windows ; .\\install.ps1")
             return
-        notify("AsenaDPI blockcheck", "Kendi penceresinde aciliyor. Sorulara cevap ver; "
-               "cikan calisan stratejiyi %APPDATA%\\AsenaDPI\\tcp443.conf'a yaz.")
+        notify("AsenaDPI blockcheck", "Kendi penceresinde açılıyor — sorulara cevap ver; "
+               "çıkan çalışan stratejiyi %APPDATA%\\AsenaDPI\\tcp443.conf'a yaz.")
         try:
             os.startfile(str(BLOCKCHECK))
-        except Exception:
-            subprocess.Popen(["cmd", "/c", "start", "", str(BLOCKCHECK)], cwd=str(BLOCKCHECK.parent))
+        except Exception as e:
+            QMessageBox.warning(None, "AsenaDPI", f"blockcheck açılamadı: {e}")
 
     def _repo(self):
         try:

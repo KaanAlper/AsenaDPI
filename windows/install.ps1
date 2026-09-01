@@ -124,5 +124,5 @@ if ((Nat "schtasks" @("/run","/tn","AsenaDPI-Tray")) -ne 0) {
 }
 
 Say "KURULUM TAMAM."
-Write-Host "   Tray sistem tepsisinde (kalkan ikonu) — SOL tik = ac/kapat, SAG tik = menu" -ForegroundColor Gray
+Write-Host "   Tray sistem tepsisinde (kalkan ikonu) - SOL tik = ac/kapat, SAG tik = menu" -ForegroundColor Gray
 Write-Host "   Sonraki her acilista otomatik baslar (yonetici, UAC'siz)." -ForegroundColor Gray
