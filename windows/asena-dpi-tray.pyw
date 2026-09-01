@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame, QPlainTextEdit, QMessageBox,
+    QProgressBar, QInputDialog,
 )
 from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont, QTextCursor
 from PySide6.QtCore import QTimer, Qt, QPointF, QProcess
@@ -17,7 +18,10 @@ from PySide6.QtCore import QTimer, Qt, QPointF, QProcess
 INSTALL_DIR = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "AsenaDPI"
 WINWS_DIR = INSTALL_DIR / "zapret-winws"           # winws burada calismali (WinDivert dosyalari)
 WINWS = WINWS_DIR / "winws.exe"
-BLOCKCHECK = INSTALL_DIR / "blockcheck" / "blockcheck.cmd"
+# blockcheck OTOMATIK: interaktif .cmd yerine cygwin bash ile blockcheck.sh non-interaktif
+CYG_BASH = INSTALL_DIR / "cygwin" / "bin" / "bash.exe"
+BLOCKCHECK_SH = INSTALL_DIR / "blockcheck" / "zapret" / "blockcheck.sh"
+OPTIMIZE_DOMAINS = "discord.com gateway.discord.gg"   # blockcheck hedefi (istenirse degistir)
 CFG = Path(os.environ.get("APPDATA", str(Path.home()))) / "AsenaDPI"
 BLACKLIST = CFG / "blacklist.txt"
 CLEAN = CFG / "hostlist_clean.txt"
@@ -56,6 +60,57 @@ def notify(title, body):
             _TRAY.showMessage(title, body, QSystemTrayIcon.Information, 5000)
     except Exception:
         pass
+
+
+def to_cygpath(p):
+    """C:\\X\\Y -> /cygdrive/c/X/Y (bosluklu yollar korunur)."""
+    p = str(p)
+    return "/cygdrive/" + p[0].lower() + p[2:].replace("\\", "/")
+
+
+def parse_best_strategy(text):
+    """blockcheck ciktisindan en iyi TLS1.3 winws/nfqws stratejisini sec (agdan-bagimsiz fooling
+    tercih; autottl bizim kurulumda guvenilmez). Yalniz --dpi-desync... kismini dondurur."""
+    import re
+    lines = text.splitlines()
+    cands = []
+    for i, l in enumerate(lines):
+        m = re.search(r'curl_test_https_tls13.*?(?:nfqws|winws)\s+(.*)$', l)
+        if m and any("AVAILABLE" in lines[j] for j in range(i + 1, min(i + 3, len(lines)))):
+            cands.append(m.group(1))
+    insum = False
+    for l in lines:
+        if "* SUMMARY" in l:
+            insum = True
+        if insum:
+            m = re.search(r'curl_test_https_tls13.*?(?:nfqws|winws)\s+(.*)$', l)
+            if m:
+                cands.append(m.group(1))
+    out = []
+    for c in cands:
+        idx = c.find("--dpi-desync")   # --wf-* kismini at (start_on kendi ekliyor)
+        if idx >= 0:
+            out.append(c[idx:].strip())
+
+    def score(s):
+        sc = 0.0
+        if "autottl" in s: sc -= 5
+        if re.search(r'--dpi-desync-ttl=\d', s) and "autottl" not in s: sc -= 1
+        if "fooling=md5sig" in s: sc += 4
+        elif "fooling=badseq" in s: sc += 3
+        elif "fooling=" in s: sc += 2
+        if any(x in s for x in ("fakedsplit", "fakeddisorder", "multidisorder")): sc += 2
+        sc -= s.count("--") * 0.1
+        return sc
+
+    seen, uniq = set(), []
+    for c in out:
+        if c and c not in seen:
+            seen.add(c); uniq.append(c)
+    if not uniq:
+        return None
+    uniq.sort(key=score, reverse=True)
+    return uniq[0]
 
 
 def load_settings() -> dict:
@@ -209,46 +264,52 @@ def section(t):
 
 
 class OptimizeWindow(QWidget):
+    """Herkesin anlayacagi hos popup: buyuk durum yazisi + animasyonlu ilerleme + sade sonuc.
+    Ham blockcheck/git ciktisi 'Detaylar'da gizli. optimize ve update icin ortak."""
     def __init__(self, tray):
         super().__init__()
         self.tray = tray; self.proc = None; self._on_done = None
-        self.setWindowTitle("AsenaDPI — En iyi strateji (blockcheck)")
-        self.resize(600, 400); self.setWindowIcon(make_icon(True))
-        self.setStyleSheet("QWidget{background:#1b1f27;color:#e6e9ee;font-size:12px;}"
-                           "QPushButton{background:#2a2f37;border:1px solid #3a414c;border-radius:6px;padding:6px 14px;}")
-        v = QVBoxLayout(self); v.setContentsMargins(14, 14, 14, 14)
-        self.status = QLabel("blockcheck çalışıyor… (birkaç dakika)"); self.status.setStyleSheet("font-weight:bold;")
-        v.addWidget(self.status)
-        self.out = QPlainTextEdit(); self.out.setReadOnly(True)
-        self.out.setStyleSheet("background:#0e1116;color:#b8e0d2;border:1px solid #262c36;"
-                               "border-radius:6px;font-family:Consolas,monospace;font-size:11px;")
+        self.setWindowTitle("AsenaDPI")
+        self.setWindowIcon(make_icon(True)); self.setMinimumWidth(460)
+        self.setStyleSheet(f"""
+            QWidget {{ background:#1b1f27; color:#e6e9ee; font-size:12px; }}
+            QLabel#title {{ font-size:16px; font-weight:700; }}
+            QLabel#sub {{ color:#a6adc8; }}
+            QProgressBar {{ background:#2a2f37; border:none; border-radius:6px; height:10px; }}
+            QProgressBar::chunk {{ background:{ACCENT}; border-radius:6px; }}
+            QPushButton {{ background:#2a2f37; border:1px solid #3a414c; border-radius:6px; padding:7px 14px; }}
+            QPushButton:hover {{ background:#333a44; }}
+            QPlainTextEdit {{ background:#0e1116; color:#8fb8ab; border:1px solid #262c36;
+                              border-radius:6px; font-family:Consolas,monospace; font-size:10px; }}
+        """)
+        v = QVBoxLayout(self); v.setContentsMargins(20, 18, 20, 16); v.setSpacing(11)
+        self.title = QLabel("Hazır"); self.title.setObjectName("title")
+        self.sub = QLabel(""); self.sub.setObjectName("sub"); self.sub.setWordWrap(True)
+        v.addWidget(self.title); v.addWidget(self.sub)
+        self.bar = QProgressBar(); self.bar.setTextVisible(False); v.addWidget(self.bar)
+        self.out = QPlainTextEdit(); self.out.setReadOnly(True); self.out.setFixedHeight(170); self.out.hide()
         v.addWidget(self.out)
-        h = QHBoxLayout(); h.addStretch(1)
+        row = QHBoxLayout()
+        self.detail_btn = QPushButton("Detayları göster"); self.detail_btn.setCheckable(True)
+        self.detail_btn.toggled.connect(self._toggle_detail)
+        row.addWidget(self.detail_btn); row.addStretch(1)
         self.btn_stop = QPushButton("Durdur"); self.btn_stop.clicked.connect(self.stop)
-        b_close = QPushButton("Kapat"); b_close.clicked.connect(self.close)
-        h.addWidget(self.btn_stop); h.addWidget(b_close); v.addLayout(h)
+        self.btn_close = QPushButton("Kapat"); self.btn_close.clicked.connect(self.close)
+        row.addWidget(self.btn_stop); row.addWidget(self.btn_close)
+        v.addLayout(row)
 
-    def run(self):
-        if not BLOCKCHECK.exists():
-            self.out.setPlainText(f"blockcheck bulunamadı:\n{BLOCKCHECK}\n(install.ps1 bundle'ı kurmamış olabilir)")
-            self.show(); self.raise_(); return
-        if self.proc and self.proc.state() != QProcess.NotRunning:
-            self.show(); self.raise_(); return
-        self.out.clear(); self.btn_stop.setEnabled(True)
-        self.status.setText("blockcheck çalışıyor… (birkaç dakika)")
-        self.show(); self.raise_(); self.activateWindow()
-        self.proc = QProcess(self); self.proc.setProcessChannelMode(QProcess.MergedChannels)
-        self.proc.setWorkingDirectory(str(BLOCKCHECK.parent))
-        self.proc.readyRead.connect(self._read); self.proc.finished.connect(self._done)
-        self._on_done = None
-        self.proc.start("cmd", ["/c", str(BLOCKCHECK)])
+    def _toggle_detail(self, on):
+        self.out.setVisible(on)
+        self.detail_btn.setText("Detayları gizle" if on else "Detayları göster")
+        self.adjustSize()
 
-    def run_cmd(self, program, args, workdir, title, on_done):
-        """Genel: herhangi bir komutu canli konsolla calistir (guncelleme icin)."""
+    def run_cmd(self, program, args, workdir, title, sub, on_done):
         if self.proc and self.proc.state() != QProcess.NotRunning:
             self.show(); self.raise_(); return
         self._on_done = on_done
-        self.out.clear(); self.btn_stop.setEnabled(True); self.status.setText(title)
+        self.title.setText(title); self.sub.setText(sub); self.out.clear()
+        self.bar.setRange(0, 0)   # belirsiz/animasyonlu (sure bilinmiyor)
+        self.btn_stop.setEnabled(True)
         self.show(); self.raise_(); self.activateWindow()
         self.proc = QProcess(self); self.proc.setProcessChannelMode(QProcess.MergedChannels)
         if workdir:
@@ -263,14 +324,19 @@ class OptimizeWindow(QWidget):
 
     def _done(self, code, _st):
         self.btn_stop.setEnabled(False)
+        self.bar.setRange(0, 100); self.bar.setValue(100)
         if self._on_done:
-            cb = self._on_done; self._on_done = None; cb(code); self.tray.refresh(); return
-        self.status.setText(f"Bitti (kod {code}). Çalışan stratejiyi tcp443.conf'a elle yazabilirsin.")
+            cb = self._on_done; self._on_done = None; cb(code)
         self.tray.refresh()
+
+    def set_result(self, title, sub):
+        self.title.setText(title); self.sub.setText(sub)
+        self.bar.setRange(0, 100); self.bar.setValue(100); self.btn_stop.setEnabled(False)
 
     def stop(self):
         if self.proc and self.proc.state() != QProcess.NotRunning:
-            self.proc.kill(); self.status.setText("Durduruldu.")
+            self.proc.kill()
+        self.set_result("Durduruldu", "İşlem iptal edildi.")
 
     def closeEvent(self, e):
         if self.proc and self.proc.state() != QProcess.NotRunning:
@@ -387,7 +453,7 @@ class AsenaTray:
         a_log = QAction("Logu göster", self.menu); a_log.triggered.connect(lambda: os.startfile(str(LOG)) if LOG.exists() else None); self.menu.addAction(a_log)
         a_upd = QAction("Güncelle (GitHub)", self.menu); a_upd.triggered.connect(self.update); self.menu.addAction(a_upd)
         self.menu.addSeparator()
-        a_q = QAction("Çıkış", self.menu); a_q.triggered.connect(app.quit); self.menu.addAction(a_q)
+        a_q = QAction("Çıkış (DPI'ı durdur)", self.menu); a_q.triggered.connect(self.quit_app); self.menu.addAction(a_q)
         self.tray.setContextMenu(self.menu); self.tray.activated.connect(self.on_act); self.tray.show()
         self.t = QTimer(); self.t.timeout.connect(self.refresh); self.t.start(3000); self.refresh()
         QTimer.singleShot(8000, self._autocheck)
@@ -397,20 +463,49 @@ class AsenaTray:
         self.win.open_fresh()
 
     def optimize(self):
-        # blockcheck.cmd interaktif + kendi elevator'iyla acilir -> KENDI penceresinde calistir
-        if not BLOCKCHECK.exists():
-            QMessageBox.warning(None, "AsenaDPI — blockcheck yok",
-                "blockcheck bulunamadı:\n" + str(BLOCKCHECK) + "\n\n"
-                "Muhtemelen install.ps1 tam çalışmadı (bundle kopyalanmadı). "
-                "Yönetici PowerShell'de repo'da tekrar çalıştır:\n"
-                "  cd AsenaDPI\\windows ; .\\install.ps1")
+        if not (CYG_BASH.exists() and BLOCKCHECK_SH.exists()):
+            QMessageBox.warning(None, "AsenaDPI",
+                "Gerekli dosyalar eksik (blockcheck/cygwin). Kurulumu tamamlamak için\n"
+                "yönetici PowerShell'de install.ps1'i tekrar çalıştır.")
             return
-        notify("AsenaDPI blockcheck", "Kendi penceresinde açılıyor — sorulara cevap ver; "
-               "çıkan çalışan stratejiyi %APPDATA%\\AsenaDPI\\tcp443.conf'a yaz.")
-        try:
-            os.startfile(str(BLOCKCHECK))
-        except Exception as e:
-            QMessageBox.warning(None, "AsenaDPI", f"blockcheck açılamadı: {e}")
+        # ANLAMLI/KOLAY girdi: blockcheck'in karışık promptları yerine tek sade soru
+        dom, ok = QInputDialog.getText(
+            None, "En iyi ayarı bul",
+            "Hangi site için en iyi ayar aransın?\n"
+            "(açılmayan siteyi yaz; birden çoksa boşlukla ayır)",
+            text=OPTIMIZE_DOMAINS)
+        if not ok or not dom.strip():
+            return
+        dom = " ".join(dom.split())
+        if self.optwin is None:
+            self.optwin = OptimizeWindow(self)
+        # temiz DNS ac (blockcheck gercek IP'yi cozsun) + kendi winws'imizi durdur (karismasin)
+        dns_doh_on()
+        subprocess.run(["taskkill", "/f", "/im", "winws.exe"], creationflags=NO_WINDOW, capture_output=True)
+        cyg = to_cygpath(BLOCKCHECK_SH.parent)
+        cmd = ("cd '%s' && export DOMAINS='%s' ENABLE_HTTP=0 ENABLE_HTTPS_TLS12=1 "
+               "ENABLE_HTTPS_TLS13=1 ENABLE_HTTP3=0 SCANLEVEL=standard BATCH=1 IPV=4 "
+               "REPEATS=1 PARALLEL=0; yes '' | ./blockcheck.sh") % (cyg, dom)
+        self.optwin.run_cmd(
+            str(CYG_BASH), ["--login", "-c", cmd], str(BLOCKCHECK_SH.parent),
+            "En iyi ayar aranıyor…",
+            f"'{dom}' için ağ taranıyor; en iyi DPI ayarı bulunuyor. Birkaç dakika sürebilir.",
+            self._optimize_done)
+
+    def _optimize_done(self, code):
+        best = parse_best_strategy(self.optwin.out.toPlainText())
+        if best:
+            try:
+                CFG.mkdir(parents=True, exist_ok=True)
+                STRAT_FILE.write_text("# blockcheck otomatik buldu\n" + best + "\n", encoding="utf-8")
+            except Exception:
+                pass
+            self.optwin.set_result("✅ En iyi ayar bulundu ve uygulandı",
+                "Ağın için en iyi DPI ayarı seçilip etkinleştirildi. Şimdi siteyi/uygulamayı dene.")
+        else:
+            self.optwin.set_result("ℹ️ Ekstra ayara gerek yok",
+                "Bu ağda DPI engeli görünmüyor. DNS koruması (DoH) zaten yeterli — bağlan yeter.")
+        start_on()   # winws'i (yeni strateji varsa onunla) + DoH ile yeniden baslat
 
     def _repo(self):
         try:
@@ -422,23 +517,34 @@ class AsenaTray:
     def update(self):
         repo = self._repo()
         if not repo:
+            QMessageBox.warning(None, "AsenaDPI",
+                "Güncelleme kaynağı bulunamadı. install.ps1'i bir kez daha çalıştır.")
             return
         if self.optwin is None: self.optwin = OptimizeWindow(self)
 
         def done(code):
             if code != 0:
-                self.optwin.status.setText(f"git pull başarısız (kod {code}).")
+                self.optwin.set_result("Güncelleme başarısız",
+                    "GitHub'a ulaşılamadı veya git hata verdi. Detaylara bakabilirsin.")
                 return
             try:
-                # yeni tray'i (ve varsa config örneklerini) Program Files'a kopyala
                 shutil.copy2(os.path.join(repo, "windows", "asena-dpi-tray.pyw"),
                              str(INSTALL_DIR / "asena-dpi-tray.pyw"))
-                self.optwin.status.setText("✅ Güncellendi. Tray yeniden başlatılıyor…")
+                self.optwin.set_result("✅ Güncellendi",
+                    "Yeni sürüm kuruldu. Uygulama birazdan yeniden başlatılıyor…")
                 QTimer.singleShot(1400, self._restart)
             except Exception as e:
-                self.optwin.status.setText(f"Kopyalama hatası: {e}")
+                self.optwin.set_result("Kopyalama hatası", str(e))
         self.optwin.run_cmd("git", ["-C", repo, "pull", "--ff-only"], repo,
-                            "Güncelleniyor (git pull)…", done)
+                            "Güncelleniyor…", "GitHub'dan en son sürüm indiriliyor.", done)
+
+    def quit_app(self):
+        # cikista DPI'i TAMAMEN durdur (winws + QUIC block + DoH geri al) -> arka planda kalmasin
+        try:
+            stop_off()
+        except Exception:
+            pass
+        self.app.quit()
 
     def _restart(self):
         # yeni tray'i baslat, sonra eskisini kapat (os.execv Windows'ta guvenilmez)

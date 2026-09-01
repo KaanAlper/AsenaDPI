@@ -356,7 +356,7 @@ class AsenaTray:
         self.act_update = QAction("Güncelle (GitHub)", self.menu); self.act_update.triggered.connect(self.update)
         self.menu.addAction(self.act_update)
         self.menu.addSeparator()
-        a_q = QAction("Çıkış", self.menu); a_q.triggered.connect(app.quit)
+        a_q = QAction("Çıkış (DPI'ı durdur)", self.menu); a_q.triggered.connect(self.quit_app)
         self.menu.addAction(a_q)
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self.on_act)
@@ -402,6 +402,14 @@ class AsenaTray:
             else:
                 self.optwin.status.setText(f"Güncelleme başarısız (çıkış kodu {code}). Log'a bak.")
         self.optwin.run(UPDATE, "Güncelleniyor (git pull + yeniden kur)…", done, "AsenaDPI — Güncelle")
+
+    def quit_app(self):
+        # cikista DPI'i durdur (arka planda nfqws/DoH kalmasin)
+        try:
+            subprocess.run(OFF, capture_output=True, timeout=25)
+        except Exception:
+            pass
+        self.app.quit()
 
     def _restart(self):
         # yeni tray'i baslat (yeni koddan), sonra eskisini kapat
