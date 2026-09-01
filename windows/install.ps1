@@ -87,7 +87,19 @@ Say "Python: $pyExe"
 # Dogrudan pip: kuruluysa "already satisfied" deyip ~2sn'de gecer, degilse kurar. Qt yuklenmez.
 Say "PySide6 (pip - kuruluysa aninda gecer, degilse ~250 MB indirir)..."
 & $pyExe -m pip install --upgrade pip
-& $pyExe -m pip install PySide6
+$pysideOk = $false
+for ($i = 1; $i -le 4 -and -not $pysideOk; $i++) {
+    if ($i -gt 1) { Say "PySide6 tekrar deneniyor ($i/4) - baglanti kopmustu..." }
+    & $pyExe -m pip install --timeout 120 --retries 8 PySide6
+    & $pyExe -m pip show PySide6 2>&1 | Out-Null   # Qt DLL YUKLEMEDEN kurulu mu bak
+    $pysideOk = ($LASTEXITCODE -eq 0)
+}
+if (-not $pysideOk) {
+    Say "UYARI: PySide6 indirilemedi (baglanti koptu) -> TRAY ACILMAZ."
+    Say "Su komutu 1-2 kez dene, sonra tray'i baslat:"
+    Write-Host "   & `"$pyExe`" -m pip install PySide6" -ForegroundColor Yellow
+    Write-Host "   schtasks /run /tn AsenaDPI-Tray" -ForegroundColor Yellow
+}
 
 # --- 1) zapret-win-bundle indir (winws + WinDivert + blockcheck + cygwin) ---
 # TUM bundle'i kopyala: blockcheck.cmd kardes ..\cygwin ve ..\tools'a baglidir; yapiyi korumazsak
@@ -186,5 +198,5 @@ if ((Nat "schtasks" @("/run","/tn","AsenaDPI-Tray")) -ne 0) {
 }
 
 Say "KURULUM TAMAM."
-Write-Host "   Tray sistem tepsisinde (kalkan ikonu) - SOL tik = ac/kapat, SAG tik = menu" -ForegroundColor Gray
+Write-Host "   Tray sistem tepsisinde (AsenaDPI ikonu) - SOL tik = ac/kapat, SAG tik = menu" -ForegroundColor Gray
 Write-Host "   Sonraki her acilista otomatik baslar (yonetici, UAC'siz)." -ForegroundColor Gray

@@ -261,6 +261,26 @@ def app_qicon() -> QIcon:
     return make_icon(True)
 
 
+def dim_icon(icon: QIcon) -> QIcon:
+    """Kapali durum icin ikonu soluklastir (renkli kurt+DPI -> silik)."""
+    try:
+        pm = icon.pixmap(64, 64)
+        out = QPixmap(pm.size()); out.fill(Qt.transparent)
+        p = QPainter(out); p.setOpacity(0.35); p.drawPixmap(0, 0, pm); p.end()
+        return QIcon(out)
+    except Exception:
+        return icon
+
+
+def tray_icons():
+    """(on, off) tray ikonlari: kurt+DPI (.ico) varsa onu kullan, yoksa cizili kalkan."""
+    if ICO_PATH.exists():
+        base = app_qicon()
+        if not base.isNull():
+            return base, dim_icon(base)
+    return make_icon(True), make_icon(False)
+
+
 def _sec(t):
     l = QLabel(t); f = QFont(); f.setBold(True); f.setPointSize(10); l.setFont(f)
     l.setStyleSheet(f"color:{ACCENT}; margin-top:2px;"); return l
@@ -534,7 +554,7 @@ class AppWindow(QWidget):
 class AsenaTray:
     def __init__(self, app):
         self.app = app; self.win = None
-        self.icon_on = make_icon(True); self.icon_off = make_icon(False)
+        self.icon_on, self.icon_off = tray_icons()   # kurt+DPI (acik renkli / kapali soluk)
         self.tray = QSystemTrayIcon(); self.menu = QMenu()
         global _TRAY; _TRAY = self.tray
         self.act_toggle = QAction("Baglan", self.menu); self.act_toggle.triggered.connect(self.toggle)
