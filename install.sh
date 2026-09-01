@@ -41,9 +41,12 @@ case "$PM" in
     $SUDO apt-get install -y python3-pyside6.qtwidgets python3-pyside6.qtgui python3-pyside6.qtcore 2>/dev/null || true
     ;;
   pacman)
-    $SUDO pacman -Sy --needed --noconfirm git make gcc nftables curl base-devel \
-        zlib libcap libnetfilter_queue libnfnetlink libmnl python
-    $SUDO pacman -S --needed --noconfirm pyside6 2>/dev/null || true
+    # Her paketi TEK TEK kur -> biri cakisirsa (or. CachyOS'ta zlib <-> zlib-ng-compat) sadece
+    # o atlanir, transaction bozulmaz. zlib gibi zaten saglanan paketler zaten atlanir.
+    $SUDO pacman -Sy --noconfirm 2>/dev/null || true
+    for p in git make gcc nftables curl base-devel zlib libcap libnetfilter_queue libnfnetlink libmnl python pyside6; do
+        $SUDO pacman -S --needed --noconfirm "$p" 2>/dev/null || echo "   ($p atlandi - cakisma/zaten var/bulunamadi)"
+    done
     ;;
   dnf)
     $SUDO dnf install -y git make gcc nftables curl iptables python3 python3-pip \

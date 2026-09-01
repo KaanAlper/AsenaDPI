@@ -32,6 +32,7 @@ STRAT_FILE = CFG / "tcp443.conf"
 LOG = CFG / "winws.log"
 REPO_FILE = CFG / "repo_dir"
 LAST_UPDATE_CHECK = CFG / "last_update_check"
+AUTOCONNECT_FILE = CFG / "autoconnect"
 NO_WINDOW = 0x08000000
 
 DEFAULTS = {"MODE": "blacklist", "HTTP": "1", "HTTP2": "1", "HTTP3": "bypass"}
@@ -150,6 +151,33 @@ def tcp443_strategy() -> str:
 def save_strategy(s: str):
     CFG.mkdir(parents=True, exist_ok=True)
     STRAT_FILE.write_text("# AsenaDPI TCP443 stratejisi\n" + s.strip() + "\n", encoding="utf-8")
+
+
+def autostart_enabled() -> bool:
+    return run_hidden(["schtasks", "/query", "/tn", "AsenaDPI-Tray"]).returncode == 0
+
+
+def set_autostart(on: bool):
+    if on:
+        tr = str(INSTALL_DIR / "asena-dpi-tray.pyw")
+        run_hidden(["schtasks", "/create", "/tn", "AsenaDPI-Tray",
+                    "/tr", f'"{sys.executable}" "{tr}"', "/sc", "onlogon", "/rl", "highest", "/f"])
+    else:
+        run_hidden(["schtasks", "/delete", "/tn", "AsenaDPI-Tray", "/f"])
+
+
+def autoconnect_on() -> bool:
+    return AUTOCONNECT_FILE.exists()
+
+
+def set_autoconnect(on: bool):
+    if on:
+        CFG.mkdir(parents=True, exist_ok=True); AUTOCONNECT_FILE.write_text("1", encoding="utf-8")
+    else:
+        try:
+            AUTOCONNECT_FILE.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def clean_hostlist():
@@ -409,6 +437,10 @@ class AppWindow(QWidget):
         srow.addWidget(self.strat); srow.addWidget(self.btn_sok); srow.addWidget(self.btn_sundo)
         v.addLayout(srow)
         self._strat_saved = self.strat.text(); self.btn_sok.hide(); self.btn_sundo.hide()
+        v.addWidget(_sec("Baslangic"))
+        self.cb_autostart = QCheckBox("Acilista baslat"); self.cb_autostart.toggled.connect(self._on_autostart)
+        self.cb_autoconn = QCheckBox("Otomatik baglan (acilista DPI'i ac)"); self.cb_autoconn.toggled.connect(self._on_autoconnect)
+        v.addWidget(self.cb_autostart); v.addWidget(self.cb_autoconn)
         self.diff = QLabel("Degisiklik yok"); self.diff.setWordWrap(True)
         self.diff.setStyleSheet("color:#c7ccd4; background:#181c23; border:1px solid #262c36; border-radius:8px; padding:8px;")
         v.addWidget(self.diff)
@@ -527,6 +559,17 @@ class AppWindow(QWidget):
     def _strat_revert(self):
         self.strat.setText(self._strat_saved); self.btn_sok.hide(); self.btn_sundo.hide()
 
+    def _on_autostart(self, c):
+        set_autostart(c)
+        self.cb_autoconn.setEnabled(c)
+        if not c and self.cb_autoconn.isChecked():
+            self.cb_autoconn.setChecked(False)
+        self.act.setText("Acilista baslat: " + ("acik" if c else "kapali"))
+
+    def _on_autoconnect(self, c):
+        set_autoconnect(c and self.cb_autostart.isChecked())
+        self.act.setText("Otomatik baglan: " + ("acik" if c and self.cb_autostart.isChecked() else "kapali"))
+
     # ---------- ayarlar ----------
     def _setp(self, k, v): self.pending[k] = v; self._update_diff()
 
@@ -616,6 +659,9 @@ class AppWindow(QWidget):
         self.saved = load_settings(); self.pending = dict(self.saved); self._sync()
         self.strat.setText(tcp443_strategy()); self._strat_saved = self.strat.text()
         self.btn_sok.hide(); self.btn_sundo.hide()
+        for cb, val in ((self.cb_autostart, autostart_enabled()), (self.cb_autoconn, autoconnect_on())):
+            cb.blockSignals(True); cb.setChecked(val); cb.blockSignals(False)
+        self.cb_autoconn.setEnabled(self.cb_autostart.isChecked())
         self.refresh(); self.tabs.setCurrentIndex(tab)
         self.show(); self.raise_(); self.activateWindow()
 
@@ -642,6 +688,14 @@ class AsenaTray:
         self.tray.setContextMenu(self.menu); self.tray.activated.connect(self.on_act); self.tray.show()
         self.t = QTimer(); self.t.timeout.connect(self.refresh); self.t.start(3000); self.refresh()
         QTimer.singleShot(8000, self._autocheck)
+        if autoconnect_on() and not is_on():
+            QTimer.singleShot(1500, self._autoconnect)
+
+    def _autoconnect(self):
+        if autoconnect_on() and not is_on():
+            notify("AsenaDPI", "Otomatik baglaniyor...")
+            threading.Thread(target=start_on, daemon=True).start()
+            QTimer.singleShot(2500, self.refresh)
 
     def open(self, tab=0):
         if self.win is None: self.win = AppWindow(self)

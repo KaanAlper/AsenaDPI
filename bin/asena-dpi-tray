@@ -32,7 +32,42 @@ STRAT_FILE = CFG / "tcp443.conf"
 REPO_FILE = CFG / "repo_dir"
 LAST_UPDATE_CHECK = CFG / "last_update_check"
 PNG_PATH = CFG / "asena-dpi.png"
+AUTOSTART_DESKTOP = Path.home() / ".config" / "autostart" / "asena-dpi-tray.desktop"
+AUTOCONNECT_FILE = CFG / "autoconnect"
 OPTIMIZE_DOMAINS = "discord.com gateway.discord.gg"
+
+
+def autostart_enabled() -> bool:
+    return AUTOSTART_DESKTOP.exists()
+
+
+def set_autostart(on: bool):
+    if on:
+        AUTOSTART_DESKTOP.parent.mkdir(parents=True, exist_ok=True)
+        AUTOSTART_DESKTOP.write_text(
+            "[Desktop Entry]\nType=Application\nName=AsenaDPI\n"
+            "Comment=DPI/DNS bypass tray\nExec=/usr/local/bin/asena-dpi-tray\n"
+            f"Icon={PNG_PATH}\nStartupWMClass=asena-dpi\nTerminal=false\n"
+            "X-GNOME-Autostart-enabled=true\n", encoding="utf-8")
+    else:
+        try:
+            AUTOSTART_DESKTOP.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def autoconnect_on() -> bool:
+    return AUTOCONNECT_FILE.exists()
+
+
+def set_autoconnect(on: bool):
+    if on:
+        CFG.mkdir(parents=True, exist_ok=True); AUTOCONNECT_FILE.write_text("1", encoding="utf-8")
+    else:
+        try:
+            AUTOCONNECT_FILE.unlink()
+        except FileNotFoundError:
+            pass
 
 DEFAULTS = {"MODE": "blacklist", "HTTP": "1", "HTTP2": "1", "HTTP3": "bypass"}
 LBL = {
@@ -274,6 +309,10 @@ class AppWindow(QWidget):
         v.addLayout(srow)
         self._strat_saved = self.strat.text()
         self.btn_sok.hide(); self.btn_sundo.hide()
+        v.addWidget(_sec("Başlangıç"))
+        self.cb_autostart = QCheckBox("Açılışta başlat"); self.cb_autostart.toggled.connect(self._on_autostart)
+        self.cb_autoconn = QCheckBox("Otomatik bağlan (açılışta DPI'ı aç)"); self.cb_autoconn.toggled.connect(self._on_autoconnect)
+        v.addWidget(self.cb_autostart); v.addWidget(self.cb_autoconn)
         self.diff = QLabel("Değişiklik yok"); self.diff.setWordWrap(True)
         self.diff.setStyleSheet("color:#c7ccd4; background:#181c23; border:1px solid #262c36; border-radius:8px; padding:8px;")
         v.addWidget(self.diff)
@@ -376,6 +415,17 @@ class AppWindow(QWidget):
     def _strat_revert(self):
         self.strat.setText(self._strat_saved); self.btn_sok.hide(); self.btn_sundo.hide()
 
+    def _on_autostart(self, c):
+        set_autostart(c)
+        self.cb_autoconn.setEnabled(c)
+        if not c and self.cb_autoconn.isChecked():
+            self.cb_autoconn.setChecked(False)   # otomatik bağlan, açılışta-başlat olmadan anlamsız
+        self.act.setText("Açılışta başlat: " + ("açık" if c else "kapalı"))
+
+    def _on_autoconnect(self, c):
+        set_autoconnect(c and self.cb_autostart.isChecked())
+        self.act.setText("Otomatik bağlan: " + ("açık" if c and self.cb_autostart.isChecked() else "kapalı"))
+
     def _setp(self, k, v): self.pending[k] = v; self._update_diff()
 
     def _sync(self):
@@ -439,6 +489,9 @@ class AppWindow(QWidget):
         self.saved = load_settings(); self.pending = dict(self.saved); self._sync()
         self.strat.setText(load_strategy()); self._strat_saved = self.strat.text()
         self.btn_sok.hide(); self.btn_sundo.hide()
+        for cb, val in ((self.cb_autostart, autostart_enabled()), (self.cb_autoconn, autoconnect_on())):
+            cb.blockSignals(True); cb.setChecked(val); cb.blockSignals(False)
+        self.cb_autoconn.setEnabled(self.cb_autostart.isChecked())
         self.refresh(); self.tabs.setCurrentIndex(tab)
         self.show(); self.raise_(); self.activateWindow()
         center_fixed(self)
@@ -465,6 +518,12 @@ class AsenaTray:
         self.tray.setContextMenu(self.menu); self.tray.activated.connect(self.on_act); self.tray.show()
         self.t = QTimer(); self.t.timeout.connect(self.refresh); self.t.start(3000); self.refresh()
         QTimer.singleShot(8000, self._autocheck)
+        if autoconnect_on() and not is_on():
+            QTimer.singleShot(1500, self._autoconnect)
+
+    def _autoconnect(self):
+        if autoconnect_on() and not is_on():
+            self._bg(ON, lambda: (notify("AsenaDPI", "Otomatik bağlandı"), self.refresh()))
 
     def open(self, tab=0):
         if self.win is None: self.win = AppWindow(self)
