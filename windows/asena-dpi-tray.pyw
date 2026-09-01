@@ -486,7 +486,7 @@ class AppWindow(QWidget):
         self._on_done = on_done
         self.act.setText(msg); self.out.clear()
         self.bar.show(); self.bar.setRange(0, 0)
-        self.detail_btn.show(); self._busy = True
+        self.detail_btn.show(); self._busy = True; self.adjustSize()
         self.proc = QProcess(self); self.proc.setProcessChannelMode(QProcess.MergedChannels)
         if workdir:
             self.proc.setWorkingDirectory(workdir)

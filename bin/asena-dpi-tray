@@ -203,10 +203,12 @@ def tray_icons():
 
 
 def center_fixed(w):
-    """Discord-popup hissi: dogal boyuta sabitle + ekran ortasina koy (tiling WM'de tasmaz)."""
+    """Discord-popup hissi: DOGAL boyuta (sizeHint) sabitle + ekran ortasina koy. self.size()
+    yerine sizeHint -> Hyprland'in verdigi rastgele boyutu yakalamaz (kirpma/bosluk olmaz)."""
     try:
+        w.setMinimumSize(0, 0); w.setMaximumSize(16777215, 16777215)   # onceki kilidi cöz
         w.adjustSize()
-        w.setFixedSize(w.size())
+        w.setFixedSize(w.sizeHint())
         scr = QApplication.primaryScreen().availableGeometry()
         fg = w.frameGeometry(); fg.moveCenter(scr.center()); w.move(fg.topLeft())
     except Exception:
@@ -329,6 +331,7 @@ class AppWindow(QWidget):
         self.dom = QLineEdit(OPTIMIZE_DOMAINS); v.addWidget(self.dom)
         self.btn_opt = QPushButton("Taramayı başlat"); self.btn_opt.setObjectName("primary")
         self.btn_opt.clicked.connect(self.start_optimize); v.addWidget(self.btn_opt)
+        v.addStretch(1)   # icerik uste hizali (kisa sekmede bosluk alta)
         return w
 
     def _tab_other(self):
@@ -338,10 +341,12 @@ class AppWindow(QWidget):
         b2 = QPushButton("DNS'i onar"); b2.clicked.connect(self.repair_dns); v.addWidget(b2)
         b3 = QPushButton("Blacklist düzenle"); b3.clicked.connect(lambda: subprocess.Popen(["xdg-open", BLACKLIST])); v.addWidget(b3)
         b4 = QPushButton("Log"); b4.clicked.connect(lambda: subprocess.Popen(["xdg-open", LOG]) if Path(LOG).exists() else None); v.addWidget(b4)
+        v.addStretch(1)
         return w
 
     def _toggle_detail(self, on):
         self.out.setVisible(on); self.detail_btn.setText("Detayları gizle" if on else "Detaylar")
+        center_fixed(self)   # konsol acilinca/kapaninca pencereyi yeniden boyutla (kirpma yok)
 
     def _run(self, cmd, msg, on_done):
         if self.proc and self.proc.state() != QProcess.NotRunning:
@@ -349,6 +354,7 @@ class AppWindow(QWidget):
         self._on_done = on_done
         self.act.setText(msg); self.out.clear()
         self.bar.show(); self.bar.setRange(0, 0); self.detail_btn.show(); self._busy = True
+        center_fixed(self)   # ilerleme cubugu/detay tusu belirince yeniden boyutla
         self.proc = QProcess(self); self.proc.setProcessChannelMode(QProcess.MergedChannels)
         self.proc.readyRead.connect(self._read); self.proc.finished.connect(self._done)
         self.proc.start(cmd[0], cmd[1:])
