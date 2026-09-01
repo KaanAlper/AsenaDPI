@@ -243,7 +243,8 @@ def winws_args(s):
         a += ["--filter-tcp=80", "--dpi-desync=fake,multisplit", "--dpi-desync-split-pos=method+2",
               "--dpi-desync-fooling=md5sig"] + hl + ["--new"]
     strat = tcp443_strategy()
-    if s["HTTP2"] == "1" and strat:        # bos strateji -> 443 desync yok (temiz kurulum)
+    # bos VEYA gecersiz strateji (--dpi-desync icermiyor) -> 443 desync yok (temiz kurulum / kalkan)
+    if s["HTTP2"] == "1" and "--dpi-desync" in strat:
         a += ["--filter-tcp=443"] + strat.split() + hl + ["--new"]
     if s["HTTP3"] == "bypass":
         a += ["--filter-udp=443", "--dpi-desync=fake", "--dpi-desync-repeats=6"] + hl + ["--new"]

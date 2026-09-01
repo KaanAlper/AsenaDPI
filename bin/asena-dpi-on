@@ -38,6 +38,12 @@ TCP443=""
 if [ -f "$STRAT_FILE" ] && grep -qvE '^#|^[[:space:]]*$' "$STRAT_FILE"; then
     TCP443="$(grep -vE '^#|^[[:space:]]*$' "$STRAT_FILE" | head -1)"
 fi
+# KALKAN: gecerli strateji '--dpi-desync' icermeli. Bozuk deger (or. tek nokta '.') 443'u
+# kirmasin -> yok say (443 desync atlanir, trafik gecer).
+case "$TCP443" in
+    *--dpi-desync*) : ;;
+    *) [ -n "$TCP443" ] && echo "UYARI: gecersiz 443 stratejisi yok sayildi: '$TCP443'"; TCP443="" ;;
+esac
 
 # blacklist modda hostlist filtresi; full modda YOK (tum trafik)
 HL=()
