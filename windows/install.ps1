@@ -22,19 +22,40 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Say "git yok -> winget ile kuruluyor..."
     winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements | Out-Null
 }
-$py = Get-Command pythonw -ErrorAction SilentlyContinue
-if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
-if (-not $py) {
+function Find-Python {
+    foreach ($n in @("python", "python3")) {
+        $c = Get-Command $n -ErrorAction SilentlyContinue
+        if ($c -and $c.Source -and (Test-Path $c.Source) -and $c.Source -notmatch "WindowsApps") { return $c.Source }
+    }
+    $pl = Get-Command py -ErrorAction SilentlyContinue
+    if ($pl) { $p = (& $pl.Source -c "import sys;print(sys.executable)" 2>$null); if ($p) { return $p.Trim() } }
+    foreach ($g in @("$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
+                     "$env:ProgramFiles\Python3*\python.exe", "C:\Python3*\python.exe")) {
+        $f = Get-ChildItem $g -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($f) { return $f.FullName }
+    }
+    return $null
+}
+
+$pyExe = Find-Python
+if (-not $pyExe) {
     Say "Python yok -> winget ile kuruluyor..."
     winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements | Out-Null
     $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+    $pyExe = Find-Python
 }
+if (-not $pyExe) { Die "Python bulunamadi. Elle kur (python.org, 'Add python to PATH' isaretli) ve tekrar calistir." }
+$pyDir = Split-Path $pyExe
+$pyw = Join-Path $pyDir "pythonw.exe"
+if (-not (Test-Path $pyw)) { $pyw = $pyExe }   # pythonw yoksa python kullan
+Say "Python: $pyExe"
+
 Say "PySide6 kontrol..."
-try { python -c "import PySide6.QtWidgets" 2>$null } catch {}
+& $pyExe -c "import PySide6.QtWidgets" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Say "PySide6 kuruluyor (pip)..."
-    python -m pip install --upgrade pip | Out-Null
-    python -m pip install PySide6 | Out-Null
+    & $pyExe -m pip install --upgrade pip | Out-Null
+    & $pyExe -m pip install PySide6 | Out-Null
 }
 
 # --- 1) zapret-win-bundle indir (winws + WinDivert + blockcheck) ---
@@ -76,7 +97,7 @@ if (-not (Test-Path "$Cfg\tcp443.conf")) {
 
 # --- 3) tray'i logon'da YONETICI olarak baslatan gorev (UAC'siz) ---
 Say "Autostart gorevi (logon, en yuksek yetki)..."
-$pyw = (Get-Command pythonw).Source
+# $pyw yukarida bulundu (pythonw.exe ya da python.exe mutlak yolu)
 $act = New-ScheduledTaskAction -Execute $pyw -Argument "`"$InstallDir\asena-dpi-tray.pyw`""
 $trg = New-ScheduledTaskTrigger -AtLogOn
 $prn = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -RunLevel Highest -LogonType Interactive
