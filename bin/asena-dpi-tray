@@ -476,9 +476,17 @@ class AppWindow(QWidget):
 
     def _optimize_done(self, code):
         if code == 0:
+            # bulunan strateji kutuya yansisin
+            self.strat.setText(load_strategy()); self._strat_saved = self.strat.text()
+            self.btn_sok.hide(); self.btn_sundo.hide()
             self.set_result("En iyi ayar bulundu ve uygulandı. Şimdi siteyi/uygulamayı dene.")
         elif code == 2:
-            self.set_result("Ekstra ayara gerek yok — bu ağda DPI engeli yok, DNS koruması (DoH) yeterli.")
+            self.set_result("TCP'de DPI engeli bulunamadı; DNS koruması (DoT) uygulandı. "
+                            "Site/uygulama hâlâ açılmıyorsa neden QUIC (UDP 443) olabilir — "
+                            "Ayarlar'da HTTP/3'ü 'engelle' yapıp tekrar dene.")
+        elif code == 3:
+            self.set_result("Test çalışmadı (blockcheck birkaç saniyede çıktı — çıktı üretmedi). "
+                            "Mevcut ayar korundu. Ayrıntı için Detaylar'a bak.")
         else:
             self.set_result(f"Tarama bitti (kod {code}). Detaylara bakabilirsin.")
 

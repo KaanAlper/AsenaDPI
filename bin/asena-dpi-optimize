@@ -18,6 +18,16 @@ mkdir -p "$CFG"
 DOMAINS_IN="${*:-discord.com gateway.discord.gg}"
 LOG=$(mktemp)
 
+# blockcheck TEMIZ ortam ister ("requires all DPI bypass methods disabled"): calisan bypass
+# nft queue'muzla cakisir / trafik zaten bypass'li olur -> blockcheck hicbir strateji bulamaz
+# (yanlis "DNS yeter"). O yuzden once durdur, tarama sonunda geri ac.
+WAS_ACTIVE=0
+[ -e /run/asena-dpi/active ] && WAS_ACTIVE=1
+echo ">> tarama icin bypass gecici durduruluyor (temiz test)..."
+/usr/local/bin/asena-dpi-off >/dev/null 2>&1 || true
+pkill -x nfqws 2>/dev/null || true    # her nfqws (eski zapret-* dahil) blockcheck'i bozar
+sleep 1
+
 echo ">> blockcheck calisiyor ($DOMAINS_IN) — birkaç dakika sürebilir..."
 for d in $DOMAINS_IN; do
   echo "   --- $d ---"
@@ -25,6 +35,11 @@ for d in $DOMAINS_IN; do
     ENABLE_HTTP3=0 SCANLEVEL=standard IPV=4 IPVS=4 REPEATS=2 PARALLEL=0 \
     timeout 900 "$BLOCKCHECK" 2>&1 | tee -a "$LOG" | grep -E "AVAILABLE|working strategy" >/dev/null || true
 done
+
+# blockcheck GERCEKTEN kostu mu? (test isaretleri yoksa hemen cikmis/basarisiz demektir ->
+# 'DNS yeter' deme). reapply'dan ONCE bak.
+RAN=0
+grep -qiE 'curl_test|\* SUMMARY|AVAILABLE|UNAVAILABLE|checking' "$LOG" && RAN=1
 
 # --- en iyi stratejiyi sec (TLS1.3'te calisan + agdan-bagimsiz fooling'i tercih et) ---
 BEST=$(python3 - "$LOG" <<'PY'
@@ -75,9 +90,17 @@ PY
 ) || BEST=""
 
 if [ -z "$BEST" ]; then
-  echo "!! blockcheck calisan nfqws stratejisi bulamadi. Mevcut ayar korunuyor."
-  echo "   (Belki bu agda DPI yok, ya da yalniz DNS zehri var -> DNS=DoT zaten hallediyor.)"
-  rm -f "$LOG"; exit 2
+  # taramadan once acikti ise bypass'i geri ac
+  [ "$WAS_ACTIVE" = 1 ] && { echo ">> bypass geri aciliyor..."; /usr/local/bin/asena-dpi-on >/dev/null 2>&1 || true; }
+  if [ "$RAN" = 1 ]; then
+    echo "!! blockcheck kostu ama calisan nfqws stratejisi bulamadi. Mevcut ayar korunuyor."
+    echo "   (Bu agda TCP DPI olmayabilir; yalniz DNS zehri ise DoT zaten hallediyor. Site/uygulama"
+    echo "    hala acilmiyorsa neden QUIC/UDP olabilir -> Ayarlar'da HTTP/3'u 'engelle' yap.)"
+    rm -f "$LOG"; exit 2
+  fi
+  echo "!! blockcheck DUZGUN CALISMADI (test ciktisi uretmedi -> saniyelerde cikti)."
+  echo "   curl/kutuphane eksik ya da baska bir sey engel olmus olabilir. Mevcut ayar korunuyor."
+  rm -f "$LOG"; exit 3
 fi
 
 # yaz + sahiplik
@@ -92,10 +115,8 @@ rm -f "$LOG"
 echo ">> EN IYI STRATEJI: $BEST"
 echo ">> yazildi: $CONF"
 
-# calisiyorsa uygula
-if [ -e /run/asena-dpi/active ]; then
-  echo ">> uygulaniyor (yeniden baslat)..."
-  /usr/local/bin/asena-dpi-off >/dev/null 2>&1 || true
-  sleep 1
+# taramadan once acikti ise yeni strateji ile geri uygula
+if [ "$WAS_ACTIVE" = 1 ]; then
+  echo ">> uygulaniyor (yeni strateji ile baslat)..."
   /usr/local/bin/asena-dpi-on
 fi
