@@ -115,8 +115,14 @@ try {
     Write-Host "   `"$pyw`" `"$InstallDir\asena-dpi-tray.pyw`"" -ForegroundColor Yellow
 }
 
-Say "KURULUM TAMAM. Tray'i simdi baslat:"
-Write-Host "   schtasks /run /tn AsenaDPI-Tray" -ForegroundColor Yellow
-Write-Host "   (ya da: `"$pyw`" `"$InstallDir\asena-dpi-tray.pyw`")" -ForegroundColor Gray
-Write-Host ""
-Write-Host "   Tray: SOL tik = ac/kapat  SAG tik = menu (ayarlar, en iyi strateji, guncelle)" -ForegroundColor Gray
+# --- 4) tray'i SIMDI baslat (sonraki acilista gorev zaten baslatir) ---
+Say "Tray baslatiliyor..."
+# calisan eski tray varsa kapat
+Nat "taskkill" @("/f","/im","pythonw.exe","/fi","WINDOWTITLE eq AsenaDPI*") | Out-Null
+if ((Nat "schtasks" @("/run","/tn","AsenaDPI-Tray")) -ne 0) {
+    Start-Process $pyw -ArgumentList "`"$InstallDir\asena-dpi-tray.pyw`""   # gorev yoksa dogrudan
+}
+
+Say "KURULUM TAMAM."
+Write-Host "   Tray sistem tepsisinde (kalkan ikonu) — SOL tik = ac/kapat, SAG tik = menu" -ForegroundColor Gray
+Write-Host "   Sonraki her acilista otomatik baslar (yonetici, UAC'siz)." -ForegroundColor Gray

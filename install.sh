@@ -149,10 +149,15 @@ if echo "$DESKTOP" | grep -qi gnome || pgrep -x gnome-shell >/dev/null 2>&1; the
   echo "   Etkinlestir: 'Extensions' -> AppIndicator/KStatusNotifier ON (ya da oturumu kapat/ac)."
 fi
 
+# --- 9) tray'i ŞİMDİ başlat (sonraki açılışta XDG autostart zaten başlatır) ---
+if [ "$USER_NAME" != root ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+    pkill -f "$BINDIR/asena-dpi-tray" 2>/dev/null || true
+    setsid "$BINDIR/asena-dpi-tray" >/dev/null 2>&1 < /dev/null &
+    say "Tray başlatıldı (sistem tepsisinde kalkan ikonu)."
+fi
+
 say "KURULUM TAMAM ✅"
 echo
-echo "  1) En iyi stratejiyi bul:   sudo asena-dpi-optimize"
-echo "  2) Bağlan:                  sudo asena-dpi-on   (kapat: sudo asena-dpi-off)"
-echo "  3) Tray'i başlat:           asena-dpi-tray &    (sonraki açılışta otomatik)"
-echo
-echo "  Tray: SOL tık = ayarlar penceresi · SAĞ tık = hızlı menü"
+echo "  • Tray sistem tepsisinde — SOL tık = aç/kapat, SAĞ tık = menü"
+echo "  • En iyi strateji (opsiyonel): sudo asena-dpi-optimize"
+echo "  • Elle: sudo asena-dpi-on / sudo asena-dpi-off"

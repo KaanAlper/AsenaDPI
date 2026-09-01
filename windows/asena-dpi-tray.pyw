@@ -425,10 +425,13 @@ class AsenaTray:
                             "Güncelleniyor (git pull)…", done)
 
     def _restart(self):
+        # yeni tray'i baslat, sonra eskisini kapat (os.execv Windows'ta guvenilmez)
         try:
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            DETACHED = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen([sys.executable] + sys.argv, creationflags=DETACHED, close_fds=True)
         except Exception:
-            self.app.quit()
+            pass
+        QTimer.singleShot(400, self.app.quit)
 
     def _autocheck(self):
         threading.Thread(target=self._do_autocheck, daemon=True).start()

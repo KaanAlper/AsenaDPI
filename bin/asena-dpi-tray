@@ -404,11 +404,12 @@ class AsenaTray:
         self.optwin.run(UPDATE, "Güncelleniyor (git pull + yeniden kur)…", done, "AsenaDPI — Güncelle")
 
     def _restart(self):
-        # tray'i yeni koddan yeniden calistir
+        # yeni tray'i baslat (yeni koddan), sonra eskisini kapat
         try:
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            subprocess.Popen([sys.executable] + sys.argv, start_new_session=True)
         except Exception:
-            self.app.quit()
+            pass
+        QTimer.singleShot(400, self.app.quit)
 
     def _autocheck(self):
         threading.Thread(target=self._do_autocheck, daemon=True).start()
