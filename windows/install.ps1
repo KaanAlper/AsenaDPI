@@ -39,30 +39,43 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 }
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Die "git kurulamadi. Elle kur ve tekrar calistir." }
 
-# --- 0b) python (mutlak yolla bul; PATH'e guvenme) ---
+# --- 0b) python (mutlak yolla bul + GERCEKTEN calistigini dogrula) ---
+# Store'un 0-byte stub'i ('WindowsApps\python.exe') "gecerli bir uygulama degil" hatasi verir;
+# bu yuzden her adayi hem boyut hem de "-c import sys" ile SINA.
+function Test-Py {
+    param([string]$exe)
+    if (-not $exe) { return $false }
+    try {
+        if (-not (Test-Path $exe)) { return $false }
+        if ((Get-Item $exe).Length -lt 20000) { return $false }   # stub 0-byte -> ele
+        & $exe -c "import sys" 2>&1 | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } catch { return $false }
+}
 function Find-Python {
+    $cands = @()
     foreach ($n in @("python", "python3")) {
         $c = Get-Command $n -ErrorAction SilentlyContinue
-        if ($c -and $c.Source -and (Test-Path $c.Source) -and $c.Source -notmatch "WindowsApps") { return $c.Source }
+        if ($c -and $c.Source -and $c.Source -notmatch "WindowsApps") { $cands += $c.Source }
     }
     $pl = Get-Command py -ErrorAction SilentlyContinue
-    if ($pl) { $p = (& $pl.Source -c "import sys;print(sys.executable)" 2>$null); if ($p) { return "$p".Trim() } }
+    if ($pl) { $p = (& $pl.Source -c "import sys;print(sys.executable)" 2>$null); if ($p) { $cands += "$p".Trim() } }
     foreach ($g in @("$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
                      "$env:ProgramFiles\Python3*\python.exe", "C:\Python3*\python.exe")) {
-        $f = Get-ChildItem $g -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($f) { return $f.FullName }
+        Get-ChildItem $g -ErrorAction SilentlyContinue | ForEach-Object { $cands += $_.FullName }
     }
+    foreach ($c in $cands) { if (Test-Py $c) { return $c } }
     return $null
 }
 
 $pyExe = Find-Python
 if (-not $pyExe) {
-    Say "Python yok -> winget ile kuruluyor..."
+    Say "Calisan Python yok -> winget ile kuruluyor..."
     Nat "winget" @("install","--id","Python.Python.3.12","-e","--accept-package-agreements","--accept-source-agreements") | Out-Null
     $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
     $pyExe = Find-Python
 }
-if (-not $pyExe) { Die "Python bulunamadi. Elle kur (python.org, 'Add python to PATH') ve tekrar calistir." }
+if (-not $pyExe) { Die "Calisan Python bulunamadi. python.org'dan kur ('Add python to PATH' isaretli) ve tekrar dene. (Ipucu: Ayarlar > Uygulamalar > Uygulama takma adlari > python.exe KAPAT.)" }
 $pyDir = Split-Path $pyExe
 $pyw = Join-Path $pyDir "pythonw.exe"
 if (-not (Test-Path $pyw)) { $pyw = $pyExe }
@@ -79,10 +92,22 @@ Say "PySide6 (pip - kuruluysa aninda gecer, degilse ~250 MB indirir)..."
 # TUM bundle'i kopyala: blockcheck.cmd kardes ..\cygwin ve ..\tools'a baglidir; yapiyi korumazsak
 # "sistem belirtilen yolu bulamiyor" der. Yapi: zapret-winws\winws.exe, blockcheck\, cygwin\, tools\
 $tmp = "$env:TEMP\zapret-win-bundle"
-if (Test-Path "$tmp\.git") { Say "bundle guncelleniyor..."; Nat "git" @("-C",$tmp,"pull","--ff-only") | Out-Null }
-else { Say "zapret-win-bundle indiriliyor (~60 MB)..."; Nat "git" @("clone","--depth","1",$Bundle,$tmp) | Out-Null }
-
-if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) { Die "winws.exe yok ($tmp\zapret-winws). Bundle indirilemedi mi?" }
+if (Test-Path "$tmp\.git") {
+    Say "bundle guncelleniyor..."; Nat "git" @("-C",$tmp,"pull","--ff-only") | Out-Null
+} else {
+    Say "zapret-win-bundle indiriliyor (~60 MB)..."
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue   # yarim/bos kalinti varsa temizle
+    Nat "git" @("clone","--depth","1",$Bundle,$tmp) | Out-Null
+}
+# eksik/yarim kaldiysa TEMIZ bir kez daha dene
+if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
+    Say "bundle eksik -> temiz yeniden indiriliyor..."
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    Nat "git" @("clone","--depth","1",$Bundle,$tmp) | Out-Null
+}
+if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
+    Die "Bundle indirilemedi ($tmp). Internet/git'i kontrol et; '$tmp' klasorunu silip tekrar dene."
+}
 
 Stop-AsenaDPI   # kopyalamadan ONCE winws+tray durdur (yoksa WinDivert64.sys kilitli -> kopya hatasi)
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
