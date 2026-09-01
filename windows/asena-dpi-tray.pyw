@@ -147,6 +147,11 @@ def tcp443_strategy() -> str:
     return DEFAULT_TCP443
 
 
+def save_strategy(s: str):
+    CFG.mkdir(parents=True, exist_ok=True)
+    STRAT_FILE.write_text("# AsenaDPI TCP443 stratejisi\n" + s.strip() + "\n", encoding="utf-8")
+
+
 def clean_hostlist():
     try:
         out = []
@@ -391,6 +396,16 @@ class AppWindow(QWidget):
         self.cb_http = QCheckBox("HTTP (80)"); self.cb_http.toggled.connect(lambda c: self._setp("HTTP", "1" if c else "0"))
         self.cb_http2 = QCheckBox("HTTP/2 (443) - kapatma"); self.cb_http2.toggled.connect(lambda c: self._setp("HTTP2", "1" if c else "0"))
         v.addWidget(self.cb_http); v.addWidget(self.cb_http2)
+        # DPI stratejisi - metin olarak duzenlenebilir; degisince sagda ✓ (uygula) + ↩ (geri al)
+        v.addWidget(_sec("DPI stratejisi (gelismis)"))
+        srow = QHBoxLayout()
+        self.strat = QLineEdit(tcp443_strategy()); self.strat.textEdited.connect(self._strat_edited)
+        self.btn_sok = QPushButton("✓"); self.btn_sok.setFixedWidth(36); self.btn_sok.setObjectName("primary")
+        self.btn_sok.clicked.connect(self._strat_apply)
+        self.btn_sundo = QPushButton("↩"); self.btn_sundo.setFixedWidth(36); self.btn_sundo.clicked.connect(self._strat_revert)
+        srow.addWidget(self.strat); srow.addWidget(self.btn_sok); srow.addWidget(self.btn_sundo)
+        v.addLayout(srow)
+        self._strat_saved = self.strat.text(); self.btn_sok.hide(); self.btn_sundo.hide()
         self.diff = QLabel("Degisiklik yok"); self.diff.setWordWrap(True)
         self.diff.setStyleSheet("color:#c7ccd4; background:#181c23; border:1px solid #262c36; border-radius:8px; padding:8px;")
         v.addWidget(self.diff)
@@ -465,15 +480,49 @@ class AppWindow(QWidget):
         self.status.setStyleSheet(f"font-weight:bold; color:{'#3ddc97' if on else '#8a929c'};")
         self.btn_power.setText("Kapat" if on else "Baglan")
 
+    def _async(self, fn, done_msg):
+        """Bloklayan islemi (start_on/stop_off - PowerShell cagrilari) THREAD'de calistir -> UI donmaz.
+        Qt cagrilari sadece ana-thread timer'inda (worker Qt'ye dokunmaz)."""
+        if self._busy:
+            return
+        self._busy = True; self._pending_msg = None
+        def work():
+            try: fn()
+            except Exception: pass
+            self._pending_msg = done_msg
+        threading.Thread(target=work, daemon=True).start()
+        self._poll = QTimer(self); self._poll.setInterval(200)
+        def check():
+            if self._pending_msg is not None:
+                self._poll.stop(); self._busy = False
+                self.act.setText(self._pending_msg); self._pending_msg = None
+                self.refresh(); self.tray.refresh(); self._update_diff()
+        self._poll.timeout.connect(check); self._poll.start()
+
     def toggle_power(self):
         if self._busy: return
-        self._busy = True
         if is_on():
-            stop_off(); self.act.setText("Kapatildi.")
+            self.act.setText("Kapatiliyor..."); self._async(stop_off, "Kapatildi.")
         else:
-            save_settings(self.pending); self.saved = dict(self.pending); start_on(); self.act.setText("Baglandi.")
-        self._busy = False
-        QTimer.singleShot(500, self.refresh); QTimer.singleShot(500, self.tray.refresh); QTimer.singleShot(520, self._update_diff)
+            save_settings(self.pending); self.saved = dict(self.pending)
+            self.act.setText("Baglaniyor..."); self._async(start_on, "Baglandi.")
+        self._update_diff()
+
+    def _strat_edited(self, _=None):
+        dirty = self.strat.text().strip() != self._strat_saved.strip()
+        self.btn_sok.setVisible(dirty); self.btn_sundo.setVisible(dirty)
+
+    def _strat_apply(self):
+        s = self.strat.text().strip()
+        if not s or self._busy: return
+        save_strategy(s); self._strat_saved = s; self.btn_sok.hide(); self.btn_sundo.hide()
+        if is_on():
+            self.act.setText("Strateji uygulaniyor..."); self._async(lambda: (stop_off(), start_on()), "Strateji uygulandi.")
+        else:
+            self.act.setText("Strateji kaydedildi.")
+
+    def _strat_revert(self):
+        self.strat.setText(self._strat_saved); self.btn_sok.hide(); self.btn_sundo.hide()
 
     # ---------- ayarlar ----------
     def _setp(self, k, v): self.pending[k] = v; self._update_diff()
@@ -497,10 +546,11 @@ class AppWindow(QWidget):
 
     def apply_settings(self):
         if self._busy or self.pending == self.saved: return
-        self._busy = True; save_settings(self.pending); self.saved = dict(self.pending)
-        if is_on(): stop_off(); start_on()
-        self._busy = False; self._update_diff(); self.act.setText("Ayarlar uygulandi.")
-        QTimer.singleShot(400, self.refresh); QTimer.singleShot(400, self.tray.refresh)
+        save_settings(self.pending); self.saved = dict(self.pending); self._update_diff()
+        if is_on():
+            self.act.setText("Uygulaniyor..."); self._async(lambda: (stop_off(), start_on()), "Ayarlar uygulandi.")
+        else:
+            self.act.setText("Ayarlar kaydedildi.")
 
     # ---------- en iyi ayar ----------
     def start_optimize(self):
@@ -530,7 +580,7 @@ class AppWindow(QWidget):
             self.set_result("En iyi ayar bulundu ve uygulandi. Simdi siteyi/uygulamayi dene.")
         else:
             self.set_result("Ekstra ayara gerek yok - bu agda DPI engeli yok, DNS korumasi (DoH) yeterli.")
-        start_on()
+        threading.Thread(target=start_on, daemon=True).start()   # bloklamadan geri ac
 
     # ---------- guncelle ----------
     def start_update(self):
@@ -556,11 +606,14 @@ class AppWindow(QWidget):
                   "GitHub'dan en son surum indiriliyor...", done)
 
     def repair_dns(self):
-        start_on(); self.set_result("DNS + DPI yeniden uygulandi."); QTimer.singleShot(400, self.refresh)
+        if self._busy: return
+        self.act.setText("DNS + DPI yeniden uygulaniyor..."); self._async(start_on, "DNS + DPI yeniden uygulandi.")
 
     def open_fresh(self, tab=0):
-        self.saved = load_settings(); self.pending = dict(self.saved); self._sync(); self.refresh()
-        self.tabs.setCurrentIndex(tab)
+        self.saved = load_settings(); self.pending = dict(self.saved); self._sync()
+        self.strat.setText(tcp443_strategy()); self._strat_saved = self.strat.text()
+        self.btn_sok.hide(); self.btn_sundo.hide()
+        self.refresh(); self.tabs.setCurrentIndex(tab)
         self.show(); self.raise_(); self.activateWindow()
 
     def closeEvent(self, e):
@@ -595,9 +648,14 @@ class AsenaTray:
         if reason == QSystemTrayIcon.Trigger: self.toggle()
 
     def toggle(self):
-        if is_on(): stop_off(); notify("AsenaDPI", "Kapatildi")
-        else: start_on(); notify("AsenaDPI", "Baglandi")
-        QTimer.singleShot(600, self.refresh)
+        # ASYNC: start_on/stop_off (PowerShell) bloklamasin -> thread + zamanlanmis refresh
+        if is_on():
+            notify("AsenaDPI", "Kapatiliyor...")
+            threading.Thread(target=stop_off, daemon=True).start()
+        else:
+            notify("AsenaDPI", "Baglaniyor...")
+            threading.Thread(target=start_on, daemon=True).start()
+        QTimer.singleShot(1500, self.refresh); QTimer.singleShot(3000, self.refresh)
 
     def refresh(self):
         on = is_on()
