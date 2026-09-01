@@ -301,7 +301,10 @@ def tray_mark(on: bool) -> QIcon:
 
 
 def tray_icons():
-    """(on, off) tray ikonlari: okunakli DPI karo."""
+    """(on, off) tray ikonlari: kurt+DPI LOGOsu (acik renkli / kapali gri). Logo yoksa DPI karosu."""
+    base = app_qicon()
+    if ICO_PATH.exists() and not base.isNull():
+        return base, dim_icon(base)
     return tray_mark(True), tray_mark(False)
 
 

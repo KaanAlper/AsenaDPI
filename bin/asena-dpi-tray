@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame, QPlainTextEdit,
     QProgressBar, QTabWidget, QLineEdit,
 )
-from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont, QTextCursor
+from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont, QTextCursor, QImage
 from PySide6.QtCore import QTimer, Qt, QPointF, QProcess, QRect
 
 ON = ["sudo", "-n", "/usr/local/bin/asena-dpi-on"]
@@ -140,6 +140,31 @@ def tray_mark(on: bool) -> QIcon:
     p.drawText(QRect(0, 8, 64, 48), Qt.AlignCenter, "DPI")
     p.end()
     return QIcon(pm)
+
+
+def _grayscale(icon: QIcon) -> QIcon:
+    """Kapali durum: logoyu gri yap (gorunur kalir, acik-renkli halden ayirt edilir)."""
+    try:
+        pm = icon.pixmap(128, 128)
+        img = pm.toImage().convertToFormat(QImage.Format_ARGB32)
+        for y in range(img.height()):
+            for x in range(img.width()):
+                c = img.pixelColor(x, y)
+                if c.alpha() == 0:
+                    continue
+                g = int(0.30 * c.red() + 0.59 * c.green() + 0.11 * c.blue())
+                c.setRgb(g, g, g, c.alpha()); img.setPixelColor(x, y, c)
+        return QIcon(QPixmap.fromImage(img))
+    except Exception:
+        return icon
+
+
+def tray_icons():
+    """(on, off) tray ikonlari: kurt+DPI LOGOsu (acik renkli / kapali gri). Logo yoksa DPI karosu."""
+    base = app_qicon()
+    if PNG_PATH.exists() and not base.isNull():
+        return base, _grayscale(base)
+    return tray_mark(True), tray_mark(False)
 
 
 def center_fixed(w):
@@ -428,7 +453,7 @@ class AppWindow(QWidget):
 class AsenaTray:
     def __init__(self, app):
         self.app = app; self.win = None
-        self.icon_on = tray_mark(True); self.icon_off = tray_mark(False)
+        self.icon_on, self.icon_off = tray_icons()
         self.tray = QSystemTrayIcon(); self.menu = QMenu()
         self.act_toggle = QAction("Bağlan", self.menu); self.act_toggle.triggered.connect(self.toggle)
         self.menu.addAction(self.act_toggle)
