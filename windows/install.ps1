@@ -94,11 +94,36 @@ for ($i = 1; $i -le 4 -and -not $pysideOk; $i++) {
     & $pyExe -m pip show PySide6 2>&1 | Out-Null   # Qt DLL YUKLEMEDEN kurulu mu bak
     $pysideOk = ($LASTEXITCODE -eq 0)
 }
+# pip dogrudan inmediyse: bu genelde DPI'in PyPI (files.pythonhosted.org) akisini kesmesi
+# (hep ayni bytede IncompleteRead). winws'i (DPI-bypass) GECICI calistirip pip'i tekrar dene.
 if (-not $pysideOk) {
-    Say "UYARI: PySide6 indirilemedi (baglanti koptu) -> TRAY ACILMAZ."
-    Say "Su komutu 1-2 kez dene, sonra tray'i baslat:"
-    Write-Host "   & `"$pyExe`" -m pip install PySide6" -ForegroundColor Yellow
-    Write-Host "   schtasks /run /tn AsenaDPI-Tray" -ForegroundColor Yellow
+    $winwsExe = "$InstallDir\zapret-winws\winws.exe"
+    if (Test-Path $winwsExe) {
+        Say "PySide6 DPI tarafindan kesiliyor gibi -> winws (DPI-bypass) acilip tekrar deneniyor..."
+        $wp = Start-Process $winwsExe -WorkingDirectory "$InstallDir\zapret-winws" -WindowStyle Hidden -PassThru `
+            -ArgumentList @("--wf-tcp=443","--filter-tcp=443","--dpi-desync=fakedsplit",
+                            "--dpi-desync-fooling=md5sig","--dpi-desync-split-pos=1")
+        Start-Sleep -Seconds 2
+        for ($i = 1; $i -le 3 -and -not $pysideOk; $i++) {
+            Say "PySide6 (winws acikken) deneme $i/3..."
+            & $pyExe -m pip install --timeout 120 --retries 8 PySide6
+            & $pyExe -m pip show PySide6 2>&1 | Out-Null; $pysideOk = ($LASTEXITCODE -eq 0)
+        }
+        try { Stop-Process -Id $wp.Id -Force -ErrorAction SilentlyContinue } catch {}
+    }
+}
+# hala olmadiysa: MIRROR dene (bolgesel PyPI engelini asar - Tsinghua CDN, guvenilir)
+if (-not $pysideOk) {
+    Say "PySide6 mirror'dan deneniyor (pypi.tuna.tsinghua.edu.cn)..."
+    & $pyExe -m pip install --timeout 120 --retries 8 -i https://pypi.tuna.tsinghua.edu.cn/simple PySide6
+    & $pyExe -m pip show PySide6 2>&1 | Out-Null; $pysideOk = ($LASTEXITCODE -eq 0)
+}
+if ($pysideOk) {
+    Say "PySide6 hazir."
+} else {
+    Say "UYARI: PySide6 indirilemedi (DPI/baglanti) -> TRAY ACILMAZ."
+    Say "Internet duzelince su komutu dene, sonra tray'i baslat:"
+    Write-Host "   & `"$pyExe`" -m pip install PySide6 ; schtasks /run /tn AsenaDPI-Tray" -ForegroundColor Yellow
 }
 
 # --- 1) zapret-win-bundle indir (winws + WinDivert + blockcheck + cygwin) ---
