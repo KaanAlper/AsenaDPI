@@ -412,14 +412,18 @@ class AppWindow(QWidget):
         self.btn_sok.setVisible(dirty); self.btn_sundo.setVisible(dirty)
 
     def _strat_apply(self):
+        if self._busy: return
         s = self.strat.text().strip()
-        if not s or self._busy: return
+        reset = not s
+        if reset:                                  # boş bırakıldı -> varsayılana dön
+            s = DEFAULT_TCP443; self.strat.setText(s)
         save_strategy(s); self._strat_saved = s
         self.btn_sok.hide(); self.btn_sundo.hide()
+        done_msg = "Varsayılan stratejiye dönüldü." if reset else "Strateji uygulandı."
         if is_on():
-            self.act.setText("Strateji uygulanıyor…"); self._seq([OFF, ON], lambda: self.act.setText("Strateji uygulandı."))
+            self.act.setText("Strateji uygulanıyor…"); self._seq([OFF, ON], lambda: self.act.setText(done_msg))
         else:
-            self.act.setText("Strateji kaydedildi.")
+            self.act.setText("Varsayılana dönüldü ve kaydedildi." if reset else "Strateji kaydedildi.")
 
     def _strat_revert(self):
         self.strat.setText(self._strat_saved); self.btn_sok.hide(); self.btn_sundo.hide()

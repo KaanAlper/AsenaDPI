@@ -550,13 +550,17 @@ class AppWindow(QWidget):
         self.btn_sok.setVisible(dirty); self.btn_sundo.setVisible(dirty)
 
     def _strat_apply(self):
+        if self._busy: return
         s = self.strat.text().strip()
-        if not s or self._busy: return
+        reset = not s
+        if reset:                                  # bos birakildi -> varsayilana don
+            s = DEFAULT_TCP443; self.strat.setText(s)
         save_strategy(s); self._strat_saved = s; self.btn_sok.hide(); self.btn_sundo.hide()
+        done_msg = "Varsayilan stratejiye donuldu." if reset else "Strateji uygulandi."
         if is_on():
-            self.act.setText("Strateji uygulaniyor..."); self._async(lambda: (stop_off(), start_on()), "Strateji uygulandi.")
+            self.act.setText("Strateji uygulaniyor..."); self._async(lambda: (stop_off(), start_on()), done_msg)
         else:
-            self.act.setText("Strateji kaydedildi.")
+            self.act.setText("Varsayilana donuldu ve kaydedildi." if reset else "Strateji kaydedildi.")
 
     def _strat_revert(self):
         self.strat.setText(self._strat_saved); self.btn_sok.hide(); self.btn_sundo.hide()
@@ -618,16 +622,35 @@ class AppWindow(QWidget):
                   f"'{dom}' icin en iyi ayar araniyor... birkac dakika surebilir.", self._optimize_done)
 
     def _optimize_done(self, code):
-        best = parse_best_strategy(self.out.toPlainText())
+        out = self.out.toPlainText()
+        low = out.lower()
+        best = parse_best_strategy(out)
+        # blockcheck GERCEKTEN kostu mu? (ozet/curl_test/available isaretleri). Bir kac saniyede
+        # cikip hic bu isaretleri uretmediyse test BASARISIZ demektir -> sakin 'DNS yeter' deme.
+        ran = ("summary" in low) or ("curl_test" in low) or ("available" in low)
         if best:
             try:
                 CFG.mkdir(parents=True, exist_ok=True)
                 STRAT_FILE.write_text("# blockcheck otomatik buldu\n" + best + "\n", encoding="utf-8")
+                if hasattr(self, "strat"):        # bulunan strateji arayuze de yansisin
+                    self.strat.setText(best); self._strat_saved = best
+                    self.btn_sok.hide(); self.btn_sundo.hide()
             except Exception:
                 pass
             self.set_result("En iyi ayar bulundu ve uygulandi. Simdi siteyi/uygulamayi dene.")
+        elif not ran:
+            # blockcheck calismadi/hemen cikti -> YANLIS 'DNS yeter' mesaji verme.
+            self.set_result("Test tamamlanamadi (blockcheck bir kac saniyede cikti - dosyalar eksik olabilir). "
+                            "Simdilik varsayilan DPI + DNS korumasi uygulandi; Discord'u yine de dene. "
+                            "Duzelmezse Detaylar'daki hataya bak ya da install.ps1'i tekrar calistir.")
         else:
-            self.set_result("Ekstra ayara gerek yok - bu agda DPI engeli yok, DNS korumasi (DoH) yeterli.")
+            # blockcheck kostu ama TCP'de DPI engeli bulamadi. Discord QUIC (UDP443) kullanir ve blockcheck
+            # QUIC'i TEST ETMEZ; ag QUIC'i karadelige atiyorsa uygulama TCP'ye dusmeden takilir -> 'acilmiyor'.
+            # Guvenli standart cozum: QUIC'i engelle -> uygulama TCP'ye duser (DoH + desync onu tasir).
+            s = load_settings(); s["HTTP3"] = "block"; save_settings(s)
+            self.set_result("TCP'de DPI engeli bulunamadi; DNS korumasi + QUIC(UDP) engeli uygulandi "
+                            "(Discord QUIC yuzunden takilmasin diye). Discord'u simdi dene. "
+                            "Gerekirse Ayarlar > HTTP/3'ten geri alabilirsin.")
         threading.Thread(target=start_on, daemon=True).start()   # bloklamadan geri ac
 
     # ---------- guncelle ----------
