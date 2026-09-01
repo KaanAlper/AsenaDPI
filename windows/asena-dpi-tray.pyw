@@ -234,17 +234,20 @@ def winws_args(s):
     clean_hostlist()
     hl = [] if s["MODE"] == "full" else [f"--hostlist={CLEAN}"]
     a = [str(WINWS)]
-    tcp_ports = [p for p, k in (("80", "HTTP"), ("443", "HTTP2")) if s[k] == "1"]
+    strat = tcp443_strategy()
+    do_80  = s["HTTP"] == "1"
+    # 443 sadece GECERLI strateji varsa islenir (bos/gecersiz -> hic yakalama; temiz kurulum/kalkan)
+    do_443 = s["HTTP2"] == "1" and "--dpi-desync" in strat
+    # WinDivert filtresi (--wf-*): SADECE gercekten islenecek portlari yakala (bos -> 'error opening filter')
+    tcp_ports = ([ "80"] if do_80 else []) + (["443"] if do_443 else [])
     if tcp_ports:
         a.append("--wf-tcp=" + ",".join(tcp_ports))
     if s["HTTP3"] == "bypass":
         a.append("--wf-udp=443")
-    if s["HTTP"] == "1":
+    if do_80:
         a += ["--filter-tcp=80", "--dpi-desync=fake,multisplit", "--dpi-desync-split-pos=method+2",
               "--dpi-desync-fooling=md5sig"] + hl + ["--new"]
-    strat = tcp443_strategy()
-    # bos VEYA gecersiz strateji (--dpi-desync icermiyor) -> 443 desync yok (temiz kurulum / kalkan)
-    if s["HTTP2"] == "1" and "--dpi-desync" in strat:
+    if do_443:
         a += ["--filter-tcp=443"] + strat.split() + hl + ["--new"]
     if s["HTTP3"] == "bypass":
         a += ["--filter-udp=443", "--dpi-desync=fake", "--dpi-desync-repeats=6"] + hl + ["--new"]
@@ -253,12 +256,28 @@ def winws_args(s):
     return a
 
 
+def _windivert_release():
+    # winws oldurulunce WinDivert64.sys surucusu hemen unload OLMAYABILIR -> yeni winws
+    # 'windivert: error opening filter: (null)' verip ANINDA cikar (baglandi-sonra-kapandi).
+    # Surucu servisini durdurup serbest birak (servis adi surume gore degisir; hepsini dene).
+    for svc in ("WinDivert", "WinDivert1.4", "windivert"):
+        subprocess.run(["sc", "stop", svc], creationflags=NO_WINDOW, capture_output=True)
+
+def _launch_winws(s):
+    lf = open(LOG, "w", encoding="utf-8", errors="replace")
+    return subprocess.Popen(winws_args(s), cwd=str(WINWS_DIR), stdout=lf, stderr=lf, creationflags=NO_WINDOW)
+
 def start_on():
     s = load_settings()
     subprocess.run(["taskkill", "/f", "/im", "winws.exe"], creationflags=NO_WINDOW, capture_output=True)
+    _windivert_release()
+    time.sleep(1.5)                       # surucu tam bosalsin
     quic_block(s["HTTP3"] == "block")
-    with open(LOG, "w", encoding="utf-8", errors="replace") as lf:
-        subprocess.Popen(winws_args(s), cwd=str(WINWS_DIR), stdout=lf, stderr=lf, creationflags=NO_WINDOW)
+    if len(winws_args(s)) > 1:            # islenecek filtre var mi? (yoksa winws bos filtreyle coker)
+        p = _launch_winws(s)
+        time.sleep(1.3)
+        if p.poll() is not None:          # hemen oldu -> WinDivert hala kilitli, bir kez daha dene
+            _windivert_release(); time.sleep(2.5); _launch_winws(s)
     dns_doh_on()
 
 
