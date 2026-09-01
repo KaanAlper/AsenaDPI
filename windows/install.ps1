@@ -61,15 +61,17 @@ if (-not (Test-Path $pyw)) { $pyw = $pyExe }
 Say "Python: $pyExe"
 
 # --- 0c) PySide6 (exit code ile kontrol; traceback scripti oldurmez) ---
+# PySide6 KURULU MU? find_spec ile bak -> Qt DLL'i YUKLEMEZ (Defender taramasi/donma yok, aninda)
+$pyChk = "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('PySide6') else 1)"
 Say "PySide6 kontrol..."
-if ((Nat $pyExe @("-c","import PySide6.QtWidgets")) -ne 0) {
+if ((Nat $pyExe @("-c",$pyChk)) -ne 0) {
     Say "PySide6 indiriliyor (~250 MB - baglantiya gore birkac dakika, ILERLEME asagida)..."
     & $pyExe -m pip install --upgrade pip
     & $pyExe -m pip install PySide6      # ciktiyi GOSTER (kara kutu olmasin)
-    if ((Nat $pyExe @("-c","import PySide6.QtWidgets")) -ne 0) {
+    if ((Nat $pyExe @("-c",$pyChk)) -ne 0) {
         Say "UYARI: PySide6 kurulamadi (tray acilmaz). Elle: `"$pyExe`" -m pip install PySide6"
     }
-}
+} else { Say "PySide6 zaten kurulu." }
 
 # --- 1) zapret-win-bundle indir (winws + WinDivert + blockcheck) ---
 $tmp = "$env:TEMP\zapret-win-bundle"
