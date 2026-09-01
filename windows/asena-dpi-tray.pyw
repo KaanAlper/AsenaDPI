@@ -15,7 +15,8 @@ from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixma
 from PySide6.QtCore import QTimer, Qt, QPointF, QProcess
 
 INSTALL_DIR = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "AsenaDPI"
-WINWS = INSTALL_DIR / "winws.exe"
+WINWS_DIR = INSTALL_DIR / "zapret-winws"           # winws burada calismali (WinDivert dosyalari)
+WINWS = WINWS_DIR / "winws.exe"
 BLOCKCHECK = INSTALL_DIR / "blockcheck" / "blockcheck.cmd"
 CFG = Path(os.environ.get("APPDATA", str(Path.home()))) / "AsenaDPI"
 BLACKLIST = CFG / "blacklist.txt"
@@ -161,7 +162,7 @@ def start_on():
                    capture_output=True)
     quic_block(s["HTTP3"] == "block")
     with open(LOG, "w", encoding="utf-8", errors="replace") as lf:
-        subprocess.Popen(winws_args(s), cwd=str(INSTALL_DIR), stdout=lf, stderr=lf,
+        subprocess.Popen(winws_args(s), cwd=str(WINWS_DIR), stdout=lf, stderr=lf,
                          creationflags=NO_WINDOW)
     dns_doh_on()
 
@@ -384,8 +385,16 @@ class AsenaTray:
         self.win.open_fresh()
 
     def optimize(self):
-        if self.optwin is None: self.optwin = OptimizeWindow(self)
-        self.optwin.run()
+        # blockcheck.cmd interaktif + kendi elevator'iyla acilir -> KENDI penceresinde calistir
+        if not BLOCKCHECK.exists():
+            notify("AsenaDPI", "blockcheck bulunamadi — install.ps1 tekrar calistir.")
+            return
+        notify("AsenaDPI blockcheck", "Kendi penceresinde aciliyor. Sorulara cevap ver; "
+               "cikan calisan stratejiyi %APPDATA%\\AsenaDPI\\tcp443.conf'a yaz.")
+        try:
+            os.startfile(str(BLOCKCHECK))
+        except Exception:
+            subprocess.Popen(["cmd", "/c", "start", "", str(BLOCKCHECK)], cwd=str(BLOCKCHECK.parent))
 
     def _repo(self):
         try:

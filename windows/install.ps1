@@ -67,23 +67,20 @@ Say "PySide6 (pip - kuruluysa aninda gecer, degilse ~250 MB indirir)..."
 & $pyExe -m pip install --upgrade pip
 & $pyExe -m pip install PySide6
 
-# --- 1) zapret-win-bundle indir (winws + WinDivert + blockcheck) ---
+# --- 1) zapret-win-bundle indir (winws + WinDivert + blockcheck + cygwin) ---
+# TUM bundle'i kopyala: blockcheck.cmd kardes ..\cygwin ve ..\tools'a baglidir; yapiyi korumazsak
+# "sistem belirtilen yolu bulamiyor" der. Yapi: zapret-winws\winws.exe, blockcheck\, cygwin\, tools\
 $tmp = "$env:TEMP\zapret-win-bundle"
 if (Test-Path "$tmp\.git") { Say "bundle guncelleniyor..."; Nat "git" @("-C",$tmp,"pull","--ff-only") | Out-Null }
-else { Say "zapret-win-bundle indiriliyor..."; Nat "git" @("clone","--depth","1",$Bundle,$tmp) | Out-Null }
+else { Say "zapret-win-bundle indiriliyor (~60 MB)..."; Nat "git" @("clone","--depth","1",$Bundle,$tmp) | Out-Null }
 
-$winws = Get-ChildItem -Path $tmp -Recurse -Filter winws.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $winws) { Die "winws.exe bulunamadi (bundle indirilemedi ya da yapisi degisti): $tmp" }
-$winwsDir = $winws.Directory.FullName
+if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) { Die "winws.exe yok ($tmp\zapret-winws). Bundle indirilemedi mi?" }
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Say "winws + WinDivert -> $InstallDir"
-Copy-Item "$winwsDir\*" $InstallDir -Recurse -Force
-if (-not (Test-Path "$InstallDir\winws.exe")) { Die "winws.exe kopyalanamadi -> $InstallDir" }
-
-# blockcheck (optimize icin) - bundle'da varsa
-$bc = Get-ChildItem -Path $tmp -Recurse -Filter "blockcheck.cmd" -ErrorAction SilentlyContinue | Select-Object -First 1
-if ($bc) { Copy-Item $bc.Directory.FullName "$InstallDir\blockcheck" -Recurse -Force }
+Say "Bundle kopyalaniyor -> $InstallDir (zapret-winws + blockcheck + cygwin + tools)..."
+Get-ChildItem -Path $tmp -Force | Where-Object { $_.Name -ne ".git" -and $_.Name -ne ".github" } |
+    ForEach-Object { Copy-Item $_.FullName $InstallDir -Recurse -Force }
+if (-not (Test-Path "$InstallDir\zapret-winws\winws.exe")) { Die "Kopyalama basarisiz -> $InstallDir\zapret-winws" }
 
 # --- 2) tray + config ---
 Say "Tray -> $InstallDir"
