@@ -1,27 +1,29 @@
 #!/usr/bin/env python3
 """
-AsenaDPI — Windows tray (winws/WinDivert + DoH DNS + blockcheck).
-Logon'da YONETICI olarak baslar (scheduled task, highest) -> winws + DNS'i dogrudan yonetir,
-her ac/kapada UAC sormaz. SOL tik = ayarlar, SAG tik = menu.
+AsenaDPI - Windows tray + TEK kontrol penceresi (winws/WinDivert + DoH DNS + blockcheck).
+Logon'da YONETICI olarak baslar (scheduled task, highest) -> winws + DNS'i dogrudan yonetir.
+SOL TIK: ac/kapat.  SAG TIK: menu -> Kontrol Paneli (tek pencere, sekmeli).
+Butun akislar (ayarlar / en iyi ayar-blockcheck / guncelle) TEK pencerede, ortak aktivite alaninda.
 """
 import os, sys, subprocess, shutil, threading, time
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame, QPlainTextEdit, QMessageBox,
-    QProgressBar, QInputDialog,
+    QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame, QPlainTextEdit,
+    QProgressBar, QTabWidget, QLineEdit,
 )
 from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont, QTextCursor
 from PySide6.QtCore import QTimer, Qt, QPointF, QProcess
 
 INSTALL_DIR = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "AsenaDPI"
-WINWS_DIR = INSTALL_DIR / "zapret-winws"           # winws burada calismali (WinDivert dosyalari)
+WINWS_DIR = INSTALL_DIR / "zapret-winws"
 WINWS = WINWS_DIR / "winws.exe"
-# blockcheck OTOMATIK: interaktif .cmd yerine cygwin bash ile blockcheck.sh non-interaktif
 CYG_BASH = INSTALL_DIR / "cygwin" / "bin" / "bash.exe"
 BLOCKCHECK_SH = INSTALL_DIR / "blockcheck" / "zapret" / "blockcheck.sh"
-OPTIMIZE_DOMAINS = "discord.com gateway.discord.gg"   # blockcheck hedefi (istenirse degistir)
+ICO_PATH = INSTALL_DIR / "asena-dpi.ico"
+OPTIMIZE_DOMAINS = "discord.com gateway.discord.gg"
+
 CFG = Path(os.environ.get("APPDATA", str(Path.home()))) / "AsenaDPI"
 BLACKLIST = CFG / "blacklist.txt"
 CLEAN = CFG / "hostlist_clean.txt"
@@ -30,28 +32,27 @@ STRAT_FILE = CFG / "tcp443.conf"
 LOG = CFG / "winws.log"
 REPO_FILE = CFG / "repo_dir"
 LAST_UPDATE_CHECK = CFG / "last_update_check"
-NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW — konsol penceresi acmasin
+NO_WINDOW = 0x08000000
 
 DEFAULTS = {"MODE": "blacklist", "HTTP": "1", "HTTP2": "1", "HTTP3": "bypass"}
 LBL = {
     "MODE": ("Mod", {"blacklist": "Blacklist", "full": "Full"}),
-    "HTTP": ("HTTP (80)", {"1": "açık", "0": "kapalı"}),
-    "HTTP2": ("HTTP/2 (443)", {"1": "açık", "0": "kapalı"}),
-    "HTTP3": ("HTTP/3·QUIC", {"bypass": "Bypass", "off": "Kapalı", "block": "Engelle"}),
+    "HTTP": ("HTTP (80)", {"1": "acik", "0": "kapali"}),
+    "HTTP2": ("HTTP/2 (443)", {"1": "acik", "0": "kapali"}),
+    "HTTP3": ("HTTP/3-QUIC", {"bypass": "Bypass", "off": "Kapali", "block": "Engelle"}),
 }
 ACCENT = "#26A69A"
 DEFAULT_TCP443 = "--dpi-desync=fakedsplit --dpi-desync-fooling=md5sig --dpi-desync-split-pos=1"
+_TRAY = None
 
 
+# ----------------------------------------------------------------- yardimcilar
 def run_hidden(args, **kw):
     return subprocess.run(args, creationflags=NO_WINDOW, capture_output=True, text=True, **kw)
 
 
 def ps(cmd):
     return run_hidden(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd])
-
-
-_TRAY = None   # QSystemTrayIcon referansi (Windows'ta notify-send yok -> tray balonu)
 
 
 def notify(title, body):
@@ -63,14 +64,11 @@ def notify(title, body):
 
 
 def to_cygpath(p):
-    """C:\\X\\Y -> /cygdrive/c/X/Y (bosluklu yollar korunur)."""
     p = str(p)
     return "/cygdrive/" + p[0].lower() + p[2:].replace("\\", "/")
 
 
 def parse_best_strategy(text):
-    """blockcheck ciktisindan en iyi TLS1.3 winws/nfqws stratejisini sec (agdan-bagimsiz fooling
-    tercih; autottl bizim kurulumda guvenilmez). Yalniz --dpi-desync... kismini dondurur."""
     import re
     lines = text.splitlines()
     cands = []
@@ -88,7 +86,7 @@ def parse_best_strategy(text):
                 cands.append(m.group(1))
     out = []
     for c in cands:
-        idx = c.find("--dpi-desync")   # --wf-* kismini at (start_on kendi ekliyor)
+        idx = c.find("--dpi-desync")
         if idx >= 0:
             out.append(c[idx:].strip())
 
@@ -150,7 +148,6 @@ def tcp443_strategy() -> str:
 
 
 def clean_hostlist():
-    """*. ve #yorum kaldir -> winws --hostlist icin."""
     try:
         out = []
         for ln in BLACKLIST.read_text(encoding="utf-8-sig").splitlines():
@@ -167,7 +164,6 @@ def is_on() -> bool:
     return "winws.exe" in (r.stdout or "")
 
 
-# ---- winws + DNS kontrol (tray YONETICI oldugu icin dogrudan) ----
 def active_iface_index() -> str:
     r = ps("(Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Sort-Object RouteMetric | "
            "Select-Object -First 1).InterfaceIndex")
@@ -224,12 +220,10 @@ def winws_args(s):
 
 def start_on():
     s = load_settings()
-    subprocess.run(["taskkill", "/f", "/im", "winws.exe"], creationflags=NO_WINDOW,
-                   capture_output=True)
+    subprocess.run(["taskkill", "/f", "/im", "winws.exe"], creationflags=NO_WINDOW, capture_output=True)
     quic_block(s["HTTP3"] == "block")
     with open(LOG, "w", encoding="utf-8", errors="replace") as lf:
-        subprocess.Popen(winws_args(s), cwd=str(WINWS_DIR), stdout=lf, stderr=lf,
-                         creationflags=NO_WINDOW)
+        subprocess.Popen(winws_args(s), cwd=str(WINWS_DIR), stdout=lf, stderr=lf, creationflags=NO_WINDOW)
     dns_doh_on()
 
 
@@ -256,61 +250,153 @@ def make_icon(on: bool) -> QIcon:
     return QIcon(pm)
 
 
-def hline():
-    f = QFrame(); f.setFrameShape(QFrame.HLine); f.setStyleSheet("color:#2a2f37;"); return f
-def section(t):
+def app_qicon() -> QIcon:
+    try:
+        if ICO_PATH.exists():
+            ic = QIcon(str(ICO_PATH))
+            if not ic.isNull():
+                return ic
+    except Exception:
+        pass
+    return make_icon(True)
+
+
+def _sec(t):
     l = QLabel(t); f = QFont(); f.setBold(True); f.setPointSize(10); l.setFont(f)
-    l.setStyleSheet(f"color:{ACCENT}; margin-top:4px;"); return l
+    l.setStyleSheet(f"color:{ACCENT}; margin-top:2px;"); return l
 
 
-class OptimizeWindow(QWidget):
-    """Herkesin anlayacagi hos popup: buyuk durum yazisi + animasyonlu ilerleme + sade sonuc.
-    Ham blockcheck/git ciktisi 'Detaylar'da gizli. optimize ve update icin ortak."""
+def _hl():
+    f = QFrame(); f.setFrameShape(QFrame.HLine); f.setStyleSheet("color:#2a2f37;"); return f
+
+
+# ----------------------------------------------------------------- TEK PENCERE
+class AppWindow(QWidget):
     def __init__(self, tray):
         super().__init__()
-        self.tray = tray; self.proc = None; self._on_done = None
-        self.setWindowTitle("AsenaDPI")
-        self.setWindowIcon(make_icon(True)); self.setMinimumWidth(460)
+        self.tray = tray; self._busy = False; self.proc = None; self._on_done = None
+        self.saved = load_settings(); self.pending = dict(self.saved)
+        self.setWindowTitle("AsenaDPI"); self.setWindowIcon(app_qicon())
+        self.setMinimumWidth(500)
         self.setStyleSheet(f"""
             QWidget {{ background:#1b1f27; color:#e6e9ee; font-size:12px; }}
-            QLabel#title {{ font-size:16px; font-weight:700; }}
-            QLabel#sub {{ color:#a6adc8; }}
-            QProgressBar {{ background:#2a2f37; border:none; border-radius:6px; height:10px; }}
+            QLabel#brand {{ font-size:15px; font-weight:800; }}
+            QTabWidget::pane {{ border:1px solid #2a303a; border-radius:8px; top:-1px; }}
+            QTabBar::tab {{ background:#20252f; padding:7px 16px; margin-right:3px;
+                            border-top-left-radius:7px; border-top-right-radius:7px; color:#a6adc8; }}
+            QTabBar::tab:selected {{ background:#2a303a; color:#e6e9ee; }}
+            QRadioButton, QCheckBox {{ padding:3px 0; }}
+            QLineEdit {{ background:#0e1116; border:1px solid #333a44; border-radius:6px; padding:6px; }}
+            QProgressBar {{ background:#2a2f37; border:none; border-radius:6px; height:9px; }}
             QProgressBar::chunk {{ background:{ACCENT}; border-radius:6px; }}
             QPushButton {{ background:#2a2f37; border:1px solid #3a414c; border-radius:6px; padding:7px 14px; }}
             QPushButton:hover {{ background:#333a44; }}
+            QPushButton#primary {{ background:{ACCENT}; border:none; color:#04201c; font-weight:bold; }}
+            QPushButton#primary:disabled {{ background:#2a2f37; color:#5b636e; }}
             QPlainTextEdit {{ background:#0e1116; color:#8fb8ab; border:1px solid #262c36;
                               border-radius:6px; font-family:Consolas,monospace; font-size:10px; }}
         """)
-        v = QVBoxLayout(self); v.setContentsMargins(20, 18, 20, 16); v.setSpacing(11)
-        self.title = QLabel("Hazır"); self.title.setObjectName("title")
-        self.sub = QLabel(""); self.sub.setObjectName("sub"); self.sub.setWordWrap(True)
-        v.addWidget(self.title); v.addWidget(self.sub)
-        self.bar = QProgressBar(); self.bar.setTextVisible(False); v.addWidget(self.bar)
-        self.out = QPlainTextEdit(); self.out.setReadOnly(True); self.out.setFixedHeight(170); self.out.hide()
-        v.addWidget(self.out)
-        row = QHBoxLayout()
-        self.detail_btn = QPushButton("Detayları göster"); self.detail_btn.setCheckable(True)
-        self.detail_btn.toggled.connect(self._toggle_detail)
-        row.addWidget(self.detail_btn); row.addStretch(1)
-        self.btn_stop = QPushButton("Durdur"); self.btn_stop.clicked.connect(self.stop)
-        self.btn_close = QPushButton("Kapat"); self.btn_close.clicked.connect(self.close)
-        row.addWidget(self.btn_stop); row.addWidget(self.btn_close)
-        v.addLayout(row)
+        root = QVBoxLayout(self); root.setContentsMargins(16, 14, 16, 14); root.setSpacing(10)
 
+        # --- baslik: logo + isim + durum + guc ---
+        hb = QHBoxLayout()
+        logo = QLabel(); logo.setPixmap(app_qicon().pixmap(30, 30)); hb.addWidget(logo)
+        hb.addWidget(QLabel("AsenaDPI", objectName="brand"))
+        hb.addStretch(1)
+        self.status = QLabel(); self.status.setStyleSheet("font-weight:bold;")
+        self.btn_power = QPushButton("Baglan"); self.btn_power.clicked.connect(self.toggle_power)
+        hb.addWidget(self.status); hb.addWidget(self.btn_power)
+        root.addLayout(hb)
+
+        # --- sekmeler ---
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._tab_settings(), "Ayarlar")
+        self.tabs.addTab(self._tab_optimize(), "En iyi ayar")
+        self.tabs.addTab(self._tab_other(), "Diger")
+        root.addWidget(self.tabs)
+
+        # --- ORTAK aktivite alani (blockcheck/guncelle ciktisi hepsi burada) ---
+        root.addWidget(_hl())
+        self.act = QLabel("Hazir."); self.act.setWordWrap(True); self.act.setStyleSheet("color:#a6adc8;")
+        root.addWidget(self.act)
+        self.bar = QProgressBar(); self.bar.setTextVisible(False); self.bar.hide()
+        root.addWidget(self.bar)
+        drow = QHBoxLayout()
+        self.detail_btn = QPushButton("Detaylar"); self.detail_btn.setCheckable(True)
+        self.detail_btn.toggled.connect(self._toggle_detail); self.detail_btn.hide()
+        drow.addWidget(self.detail_btn); drow.addStretch(1)
+        root.addLayout(drow)
+        self.out = QPlainTextEdit(); self.out.setReadOnly(True); self.out.setFixedHeight(160); self.out.hide()
+        root.addWidget(self.out)
+
+        self._sync(); self.refresh()
+        self.t = QTimer(self); self.t.timeout.connect(self.refresh); self.t.start(2500)
+
+    # ---------- sekme: Ayarlar ----------
+    def _tab_settings(self):
+        w = QWidget(); v = QVBoxLayout(w); v.setSpacing(7)
+        v.addWidget(_sec("Mod"))
+        self.g_mode = QButtonGroup(self)
+        self.rb_bl = QRadioButton("Blacklist  -  yalniz listedeki siteler")
+        self.rb_full = QRadioButton("Full  -  tum trafik")
+        for rb, val in ((self.rb_bl, "blacklist"), (self.rb_full, "full")):
+            self.g_mode.addButton(rb); rb.toggled.connect(lambda c, x=val: c and self._setp("MODE", x)); v.addWidget(rb)
+        v.addWidget(_sec("HTTP/3 - QUIC"))
+        self.g_h3 = QButtonGroup(self)
+        self.rb_bypass = QRadioButton("Bypass  -  DPI'dan gecirmeye calis")
+        self.rb_h3off = QRadioButton("Kapali  -  dokunma")
+        self.rb_block = QRadioButton("Engelle  -  QUIC kes -> TCP'ye dus (oyun)")
+        for rb, val in ((self.rb_bypass, "bypass"), (self.rb_h3off, "off"), (self.rb_block, "block")):
+            self.g_h3.addButton(rb); rb.toggled.connect(lambda c, x=val: c and self._setp("HTTP3", x)); v.addWidget(rb)
+        v.addWidget(_sec("Gelismis"))
+        self.cb_http = QCheckBox("HTTP (80)"); self.cb_http.toggled.connect(lambda c: self._setp("HTTP", "1" if c else "0"))
+        self.cb_http2 = QCheckBox("HTTP/2 (443) - kapatma"); self.cb_http2.toggled.connect(lambda c: self._setp("HTTP2", "1" if c else "0"))
+        v.addWidget(self.cb_http); v.addWidget(self.cb_http2)
+        self.diff = QLabel("Degisiklik yok"); self.diff.setWordWrap(True)
+        self.diff.setStyleSheet("color:#c7ccd4; background:#181c23; border:1px solid #262c36; border-radius:8px; padding:8px;")
+        v.addWidget(self.diff)
+        self.btn_apply = QPushButton("Degisiklikleri uygula"); self.btn_apply.setObjectName("primary")
+        self.btn_apply.clicked.connect(self.apply_settings)
+        v.addWidget(self.btn_apply); v.addStretch(1)
+        return w
+
+    # ---------- sekme: En iyi ayar (blockcheck) ----------
+    def _tab_optimize(self):
+        w = QWidget(); v = QVBoxLayout(w); v.setSpacing(8)
+        v.addWidget(_sec("En iyi ayari bul"))
+        v.addWidget(QLabel("Acilmayan siteyi yaz (birden coksa boslukla ayir); AsenaDPI agini\n"
+                           "tarayip en iyi ayari bulur ve otomatik uygular."))
+        self.dom = QLineEdit(OPTIMIZE_DOMAINS)
+        v.addWidget(self.dom)
+        self.btn_opt = QPushButton("Taramayi baslat"); self.btn_opt.setObjectName("primary")
+        self.btn_opt.clicked.connect(self.start_optimize)
+        v.addWidget(self.btn_opt); v.addStretch(1)
+        return w
+
+    # ---------- sekme: Diger ----------
+    def _tab_other(self):
+        w = QWidget(); v = QVBoxLayout(w); v.setSpacing(8)
+        v.addWidget(_sec("Bakim"))
+        b1 = QPushButton("Guncelle (GitHub)"); b1.clicked.connect(self.start_update); v.addWidget(b1)
+        b2 = QPushButton("DNS'i onar"); b2.clicked.connect(self.repair_dns); v.addWidget(b2)
+        b3 = QPushButton("Blacklist duzenle"); b3.clicked.connect(lambda: os.startfile(str(BLACKLIST))); v.addWidget(b3)
+        b4 = QPushButton("winws logu"); b4.clicked.connect(lambda: os.startfile(str(LOG)) if LOG.exists() else None); v.addWidget(b4)
+        v.addStretch(1)
+        return w
+
+    # ---------- ortak aktivite ----------
     def _toggle_detail(self, on):
         self.out.setVisible(on)
-        self.detail_btn.setText("Detayları gizle" if on else "Detayları göster")
+        self.detail_btn.setText("Detaylari gizle" if on else "Detaylar")
         self.adjustSize()
 
-    def run_cmd(self, program, args, workdir, title, sub, on_done):
+    def _run(self, program, args, workdir, msg, on_done):
         if self.proc and self.proc.state() != QProcess.NotRunning:
-            self.show(); self.raise_(); return
+            return
         self._on_done = on_done
-        self.title.setText(title); self.sub.setText(sub); self.out.clear()
-        self.bar.setRange(0, 0)   # belirsiz/animasyonlu (sure bilinmiyor)
-        self.btn_stop.setEnabled(True)
-        self.show(); self.raise_(); self.activateWindow()
+        self.act.setText(msg); self.out.clear()
+        self.bar.show(); self.bar.setRange(0, 0)
+        self.detail_btn.show(); self._busy = True
         self.proc = QProcess(self); self.proc.setProcessChannelMode(QProcess.MergedChannels)
         if workdir:
             self.proc.setWorkingDirectory(workdir)
@@ -323,20 +409,120 @@ class OptimizeWindow(QWidget):
         self.out.moveCursor(QTextCursor.End)
 
     def _done(self, code, _st):
-        self.btn_stop.setEnabled(False)
         self.bar.setRange(0, 100); self.bar.setValue(100)
-        if self._on_done:
-            cb = self._on_done; self._on_done = None; cb(code)
-        self.tray.refresh()
+        self._busy = False
+        cb = self._on_done; self._on_done = None
+        if cb:
+            cb(code)
+        self.refresh()
 
-    def set_result(self, title, sub):
-        self.title.setText(title); self.sub.setText(sub)
-        self.bar.setRange(0, 100); self.bar.setValue(100); self.btn_stop.setEnabled(False)
+    def set_result(self, msg):
+        self.act.setText(msg); self.bar.setRange(0, 100); self.bar.setValue(100)
 
-    def stop(self):
-        if self.proc and self.proc.state() != QProcess.NotRunning:
-            self.proc.kill()
-        self.set_result("Durduruldu", "İşlem iptal edildi.")
+    # ---------- guc / durum ----------
+    def refresh(self):
+        on = is_on()
+        self.status.setText("ACIK" if on else "kapali")
+        self.status.setStyleSheet(f"font-weight:bold; color:{'#3ddc97' if on else '#8a929c'};")
+        self.btn_power.setText("Kapat" if on else "Baglan")
+
+    def toggle_power(self):
+        if self._busy: return
+        self._busy = True
+        if is_on():
+            stop_off(); self.act.setText("Kapatildi.")
+        else:
+            save_settings(self.pending); self.saved = dict(self.pending); start_on(); self.act.setText("Baglandi.")
+        self._busy = False
+        QTimer.singleShot(500, self.refresh); QTimer.singleShot(500, self.tray.refresh); QTimer.singleShot(520, self._update_diff)
+
+    # ---------- ayarlar ----------
+    def _setp(self, k, v): self.pending[k] = v; self._update_diff()
+
+    def _sync(self):
+        p = self.pending
+        self.rb_bl.setChecked(p["MODE"] != "full"); self.rb_full.setChecked(p["MODE"] == "full")
+        self.rb_bypass.setChecked(p["HTTP3"] == "bypass"); self.rb_h3off.setChecked(p["HTTP3"] == "off")
+        self.rb_block.setChecked(p["HTTP3"] == "block")
+        self.cb_http.setChecked(p["HTTP"] == "1"); self.cb_http2.setChecked(p["HTTP2"] == "1")
+        self._update_diff()
+
+    def _update_diff(self):
+        rows = []
+        for k in ("MODE", "HTTP3", "HTTP", "HTTP2"):
+            if self.pending[k] != self.saved[k]:
+                name, vmap = LBL[k]
+                rows.append(f"- {name}:  {vmap[self.saved[k]]}  ->  {vmap[self.pending[k]]}")
+        self.diff.setText("\n".join(rows) if rows else "Degisiklik yok")
+        self.btn_apply.setEnabled(bool(rows))
+
+    def apply_settings(self):
+        if self._busy or self.pending == self.saved: return
+        self._busy = True; save_settings(self.pending); self.saved = dict(self.pending)
+        if is_on(): stop_off(); start_on()
+        self._busy = False; self._update_diff(); self.act.setText("Ayarlar uygulandi.")
+        QTimer.singleShot(400, self.refresh); QTimer.singleShot(400, self.tray.refresh)
+
+    # ---------- en iyi ayar ----------
+    def start_optimize(self):
+        if self._busy: return
+        if not (CYG_BASH.exists() and BLOCKCHECK_SH.exists()):
+            self.set_result("Gerekli dosyalar eksik (blockcheck/cygwin). install.ps1'i tekrar calistir.")
+            return
+        dom = " ".join(self.dom.text().split()) or OPTIMIZE_DOMAINS
+        self.tabs.setCurrentIndex(1)
+        dns_doh_on()
+        subprocess.run(["taskkill", "/f", "/im", "winws.exe"], creationflags=NO_WINDOW, capture_output=True)
+        cyg = to_cygpath(BLOCKCHECK_SH.parent)
+        cmd = ("cd '%s' && export DOMAINS='%s' ENABLE_HTTP=0 ENABLE_HTTPS_TLS12=1 "
+               "ENABLE_HTTPS_TLS13=1 ENABLE_HTTP3=0 SCANLEVEL=standard BATCH=1 IPV=4 "
+               "REPEATS=1 PARALLEL=0; yes '' | ./blockcheck.sh") % (cyg, dom)
+        self._run(str(CYG_BASH), ["--login", "-c", cmd], str(BLOCKCHECK_SH.parent),
+                  f"'{dom}' icin en iyi ayar araniyor... birkac dakika surebilir.", self._optimize_done)
+
+    def _optimize_done(self, code):
+        best = parse_best_strategy(self.out.toPlainText())
+        if best:
+            try:
+                CFG.mkdir(parents=True, exist_ok=True)
+                STRAT_FILE.write_text("# blockcheck otomatik buldu\n" + best + "\n", encoding="utf-8")
+            except Exception:
+                pass
+            self.set_result("En iyi ayar bulundu ve uygulandi. Simdi siteyi/uygulamayi dene.")
+        else:
+            self.set_result("Ekstra ayara gerek yok - bu agda DPI engeli yok, DNS korumasi (DoH) yeterli.")
+        start_on()
+
+    # ---------- guncelle ----------
+    def start_update(self):
+        if self._busy: return
+        repo = self.tray._repo()
+        if not repo:
+            self.set_result("Guncelleme kaynagi bulunamadi. install.ps1'i bir kez daha calistir.")
+            return
+
+        def done(code):
+            if code != 0:
+                self.set_result("Guncelleme basarisiz (GitHub'a ulasilamadi mi?). Detaylara bak.")
+                return
+            try:
+                shutil.copy2(os.path.join(repo, "windows", "asena-dpi-tray.pyw"),
+                             str(INSTALL_DIR / "asena-dpi-tray.pyw"))
+                self.set_result("Guncellendi. Uygulama yeniden baslatiliyor...")
+                QTimer.singleShot(1400, self.tray._restart)
+            except Exception as e:
+                self.set_result(f"Kopyalama hatasi: {e}")
+        self.tabs.setCurrentIndex(2)
+        self._run("git", ["-C", repo, "pull", "--ff-only"], repo,
+                  "GitHub'dan en son surum indiriliyor...", done)
+
+    def repair_dns(self):
+        start_on(); self.set_result("DNS + DPI yeniden uygulandi."); QTimer.singleShot(400, self.refresh)
+
+    def open_fresh(self, tab=0):
+        self.saved = load_settings(); self.pending = dict(self.saved); self._sync(); self.refresh()
+        self.tabs.setCurrentIndex(tab)
+        self.show(); self.raise_(); self.activateWindow()
 
     def closeEvent(self, e):
         if self.proc and self.proc.state() != QProcess.NotRunning:
@@ -344,168 +530,41 @@ class OptimizeWindow(QWidget):
         e.accept()
 
 
-class SettingsWindow(QWidget):
-    def __init__(self, tray):
-        super().__init__()
-        self.tray = tray; self._busy = False
-        self.saved = load_settings(); self.pending = dict(self.saved)
-        self.setWindowTitle("AsenaDPI — Ayarlar"); self.setMinimumWidth(450)
-        self.setWindowIcon(make_icon(True))
-        self.setStyleSheet(f"QWidget{{background:#1b1f27;color:#e6e9ee;font-size:12px;}}"
-                           f"QPushButton{{background:#2a2f37;border:1px solid #3a414c;border-radius:6px;padding:7px 14px;}}"
-                           f"QPushButton#apply{{background:{ACCENT};border:none;color:#04201c;font-weight:bold;}}"
-                           f"QPushButton#apply:disabled{{background:#2a2f37;color:#5b636e;}}")
-        root = QVBoxLayout(self); root.setContentsMargins(16, 16, 16, 16); root.setSpacing(9)
-        top = QHBoxLayout()
-        self.status = QLabel(); self.status.setStyleSheet("font-size:13px;font-weight:bold;")
-        self.btn_power = QPushButton("Bağlan"); self.btn_power.clicked.connect(self.toggle_power)
-        top.addWidget(self.status); top.addStretch(1); top.addWidget(self.btn_power)
-        root.addLayout(top); root.addWidget(hline())
-        root.addWidget(section("Mod"))
-        self.g_mode = QButtonGroup(self)
-        self.rb_bl = QRadioButton("Blacklist  —  yalnız listedeki siteler")
-        self.rb_full = QRadioButton("Full  —  tüm trafik")
-        for rb, val in ((self.rb_bl, "blacklist"), (self.rb_full, "full")):
-            self.g_mode.addButton(rb); rb.toggled.connect(lambda c, v=val: c and self.setp("MODE", v)); root.addWidget(rb)
-        root.addWidget(hline()); root.addWidget(section("HTTP/3 · QUIC"))
-        self.g_h3 = QButtonGroup(self)
-        self.rb_bypass = QRadioButton("Bypass  —  DPI'dan geçirmeye çalış")
-        self.rb_h3off = QRadioButton("Kapalı  —  dokunma")
-        self.rb_block = QRadioButton("Engelle  —  QUIC kes → TCP'ye düş (oyun)")
-        for rb, val in ((self.rb_bypass, "bypass"), (self.rb_h3off, "off"), (self.rb_block, "block")):
-            self.g_h3.addButton(rb); rb.toggled.connect(lambda c, v=val: c and self.setp("HTTP3", v)); root.addWidget(rb)
-        root.addWidget(hline()); root.addWidget(section("Gelişmiş"))
-        self.cb_http = QCheckBox("HTTP (80)"); self.cb_http.toggled.connect(lambda c: self.setp("HTTP", "1" if c else "0"))
-        self.cb_http2 = QCheckBox("HTTP/2 (443) — kapatma"); self.cb_http2.toggled.connect(lambda c: self.setp("HTTP2", "1" if c else "0"))
-        root.addWidget(self.cb_http); root.addWidget(self.cb_http2); root.addWidget(hline())
-        root.addWidget(section("Değişecekler"))
-        self.diff = QLabel("Değişiklik yok"); self.diff.setWordWrap(True)
-        self.diff.setStyleSheet("color:#c7ccd4;font-size:11px;background:#181c23;border:1px solid #262c36;border-radius:8px;padding:8px;")
-        root.addWidget(self.diff)
-        btns = QHBoxLayout()
-        b_edit = QPushButton("Blacklist…"); b_edit.clicked.connect(lambda: os.startfile(str(BLACKLIST)))
-        b_opt = QPushButton("En iyiyi bul"); b_opt.clicked.connect(lambda: self.tray.optimize())
-        btns.addWidget(b_edit); btns.addWidget(b_opt); btns.addStretch(1)
-        self.btn_apply = QPushButton("⟳ Uygula"); self.btn_apply.setObjectName("apply"); self.btn_apply.clicked.connect(self.apply)
-        b_close = QPushButton("Kapat"); b_close.clicked.connect(self.hide)
-        btns.addWidget(self.btn_apply); btns.addWidget(b_close); root.addLayout(btns)
-        self.sync(); self.refresh_status()
-        self.t = QTimer(self); self.t.timeout.connect(self.refresh_status); self.t.start(2500)
-
-    def refresh_status(self):
-        on = is_on()
-        self.status.setText("🟢  AsenaDPI AÇIK" if on else "⚪  AsenaDPI kapalı")
-        self.status.setStyleSheet(f"font-size:13px;font-weight:bold;color:{'#3ddc97' if on else '#8a929c'};")
-        self.btn_power.setText("Kapat" if on else "Bağlan")
-
-    def toggle_power(self):
-        if self._busy: return
-        self._busy = True
-        if is_on(): stop_off()
-        else:
-            save_settings(self.pending); self.saved = dict(self.pending); start_on()
-        self._busy = False
-        QTimer.singleShot(500, self.refresh_status); QTimer.singleShot(500, self.tray.refresh)
-        QTimer.singleShot(550, self.update_diff)
-
-    def setp(self, k, v): self.pending[k] = v; self.update_diff()
-
-    def sync(self):
-        p = self.pending
-        self.rb_bl.setChecked(p["MODE"] != "full"); self.rb_full.setChecked(p["MODE"] == "full")
-        self.rb_bypass.setChecked(p["HTTP3"] == "bypass"); self.rb_h3off.setChecked(p["HTTP3"] == "off")
-        self.rb_block.setChecked(p["HTTP3"] == "block")
-        self.cb_http.setChecked(p["HTTP"] == "1"); self.cb_http2.setChecked(p["HTTP2"] == "1"); self.update_diff()
-
-    def update_diff(self):
-        rows = []
-        for k in ("MODE", "HTTP3", "HTTP", "HTTP2"):
-            if self.pending[k] != self.saved[k]:
-                name, vmap = LBL[k]
-                rows.append(f"• {name}:  {vmap[self.saved[k]]}  →  <b style='color:{ACCENT}'>{vmap[self.pending[k]]}</b>")
-        self.diff.setText("<br>".join(rows) if rows else "Değişiklik yok")
-        self.btn_apply.setEnabled(bool(rows))
-
-    def apply(self):
-        if self._busy or self.pending == self.saved: return
-        self._busy = True; save_settings(self.pending); self.saved = dict(self.pending)
-        if is_on(): stop_off(); start_on()
-        self._busy = False; self.update_diff()
-        QTimer.singleShot(500, self.refresh_status); QTimer.singleShot(500, self.tray.refresh)
-
-    def open_fresh(self):
-        self.saved = load_settings(); self.pending = dict(self.saved); self.sync(); self.refresh_status()
-        self.show(); self.raise_(); self.activateWindow()
-
-
+# ----------------------------------------------------------------- tray
 class AsenaTray:
     def __init__(self, app):
-        self.app = app; self.win = None; self.optwin = None
+        self.app = app; self.win = None
         self.icon_on = make_icon(True); self.icon_off = make_icon(False)
         self.tray = QSystemTrayIcon(); self.menu = QMenu()
-        global _TRAY; _TRAY = self.tray   # notify() balon bildirimi icin
-        self.act_toggle = QAction("Bağlan", self.menu); self.act_toggle.triggered.connect(self.toggle)
+        global _TRAY; _TRAY = self.tray
+        self.act_toggle = QAction("Baglan", self.menu); self.act_toggle.triggered.connect(self.toggle)
         self.menu.addAction(self.act_toggle)
-        a_set = QAction("Ayarlar…", self.menu); a_set.triggered.connect(self.open_settings); self.menu.addAction(a_set)
-        a_opt = QAction("En iyi stratejiyi bul", self.menu); a_opt.triggered.connect(self.optimize); self.menu.addAction(a_opt)
+        a_panel = QAction("Kontrol paneli...", self.menu); a_panel.triggered.connect(lambda: self.open(0)); self.menu.addAction(a_panel)
+        a_opt = QAction("En iyi ayari bul", self.menu); a_opt.triggered.connect(lambda: self.open(1)); self.menu.addAction(a_opt)
+        a_upd = QAction("Guncelle", self.menu); a_upd.triggered.connect(lambda: self.open(2)); self.menu.addAction(a_upd)
         self.menu.addSeparator()
-        a_bl = QAction("Blacklist düzenle…", self.menu); a_bl.triggered.connect(lambda: os.startfile(str(BLACKLIST))); self.menu.addAction(a_bl)
-        a_log = QAction("Logu göster", self.menu); a_log.triggered.connect(lambda: os.startfile(str(LOG)) if LOG.exists() else None); self.menu.addAction(a_log)
-        a_upd = QAction("Güncelle (GitHub)", self.menu); a_upd.triggered.connect(self.update); self.menu.addAction(a_upd)
-        self.menu.addSeparator()
-        a_q = QAction("Çıkış (DPI'ı durdur)", self.menu); a_q.triggered.connect(self.quit_app); self.menu.addAction(a_q)
+        a_q = QAction("Cikis (DPI'i durdur)", self.menu); a_q.triggered.connect(self.quit_app); self.menu.addAction(a_q)
         self.tray.setContextMenu(self.menu); self.tray.activated.connect(self.on_act); self.tray.show()
         self.t = QTimer(); self.t.timeout.connect(self.refresh); self.t.start(3000); self.refresh()
         QTimer.singleShot(8000, self._autocheck)
 
-    def open_settings(self):
-        if self.win is None: self.win = SettingsWindow(self)
-        self.win.open_fresh()
+    def open(self, tab=0):
+        if self.win is None: self.win = AppWindow(self)
+        self.win.open_fresh(tab)
 
-    def optimize(self):
-        if not (CYG_BASH.exists() and BLOCKCHECK_SH.exists()):
-            QMessageBox.warning(None, "AsenaDPI",
-                "Gerekli dosyalar eksik (blockcheck/cygwin). Kurulumu tamamlamak için\n"
-                "yönetici PowerShell'de install.ps1'i tekrar çalıştır.")
-            return
-        # ANLAMLI/KOLAY girdi: blockcheck'in karışık promptları yerine tek sade soru
-        dom, ok = QInputDialog.getText(
-            None, "En iyi ayarı bul",
-            "Hangi site için en iyi ayar aransın?\n"
-            "(açılmayan siteyi yaz; birden çoksa boşlukla ayır)",
-            text=OPTIMIZE_DOMAINS)
-        if not ok or not dom.strip():
-            return
-        dom = " ".join(dom.split())
-        if self.optwin is None:
-            self.optwin = OptimizeWindow(self)
-        # temiz DNS ac (blockcheck gercek IP'yi cozsun) + kendi winws'imizi durdur (karismasin)
-        dns_doh_on()
-        subprocess.run(["taskkill", "/f", "/im", "winws.exe"], creationflags=NO_WINDOW, capture_output=True)
-        cyg = to_cygpath(BLOCKCHECK_SH.parent)
-        cmd = ("cd '%s' && export DOMAINS='%s' ENABLE_HTTP=0 ENABLE_HTTPS_TLS12=1 "
-               "ENABLE_HTTPS_TLS13=1 ENABLE_HTTP3=0 SCANLEVEL=standard BATCH=1 IPV=4 "
-               "REPEATS=1 PARALLEL=0; yes '' | ./blockcheck.sh") % (cyg, dom)
-        self.optwin.run_cmd(
-            str(CYG_BASH), ["--login", "-c", cmd], str(BLOCKCHECK_SH.parent),
-            "En iyi ayar aranıyor…",
-            f"'{dom}' için ağ taranıyor; en iyi DPI ayarı bulunuyor. Birkaç dakika sürebilir.",
-            self._optimize_done)
+    def on_act(self, reason):
+        if reason == QSystemTrayIcon.Trigger: self.toggle()
 
-    def _optimize_done(self, code):
-        best = parse_best_strategy(self.optwin.out.toPlainText())
-        if best:
-            try:
-                CFG.mkdir(parents=True, exist_ok=True)
-                STRAT_FILE.write_text("# blockcheck otomatik buldu\n" + best + "\n", encoding="utf-8")
-            except Exception:
-                pass
-            self.optwin.set_result("✅ En iyi ayar bulundu ve uygulandı",
-                "Ağın için en iyi DPI ayarı seçilip etkinleştirildi. Şimdi siteyi/uygulamayı dene.")
-        else:
-            self.optwin.set_result("ℹ️ Ekstra ayara gerek yok",
-                "Bu ağda DPI engeli görünmüyor. DNS koruması (DoH) zaten yeterli — bağlan yeter.")
-        start_on()   # winws'i (yeni strateji varsa onunla) + DoH ile yeniden baslat
+    def toggle(self):
+        if is_on(): stop_off(); notify("AsenaDPI", "Kapatildi")
+        else: start_on(); notify("AsenaDPI", "Baglandi")
+        QTimer.singleShot(600, self.refresh)
+
+    def refresh(self):
+        on = is_on()
+        self.tray.setIcon(self.icon_on if on else self.icon_off)
+        self.act_toggle.setText("Baglantiyi kes" if on else "Baglan")
+        self.tray.setToolTip(f"AsenaDPI: {'ACIK' if on else 'kapali'}  (sol tik: ac/kapat)")
 
     def _repo(self):
         try:
@@ -514,42 +573,14 @@ class AsenaTray:
         except OSError:
             return None
 
-    def update(self):
-        repo = self._repo()
-        if not repo:
-            QMessageBox.warning(None, "AsenaDPI",
-                "Güncelleme kaynağı bulunamadı. install.ps1'i bir kez daha çalıştır.")
-            return
-        if self.optwin is None: self.optwin = OptimizeWindow(self)
-
-        def done(code):
-            if code != 0:
-                self.optwin.set_result("Güncelleme başarısız",
-                    "GitHub'a ulaşılamadı veya git hata verdi. Detaylara bakabilirsin.")
-                return
-            try:
-                shutil.copy2(os.path.join(repo, "windows", "asena-dpi-tray.pyw"),
-                             str(INSTALL_DIR / "asena-dpi-tray.pyw"))
-                self.optwin.set_result("✅ Güncellendi",
-                    "Yeni sürüm kuruldu. Uygulama birazdan yeniden başlatılıyor…")
-                QTimer.singleShot(1400, self._restart)
-            except Exception as e:
-                self.optwin.set_result("Kopyalama hatası", str(e))
-        self.optwin.run_cmd("git", ["-C", repo, "pull", "--ff-only"], repo,
-                            "Güncelleniyor…", "GitHub'dan en son sürüm indiriliyor.", done)
-
     def quit_app(self):
-        # cikista DPI'i TAMAMEN durdur (winws + QUIC block + DoH geri al) -> arka planda kalmasin
-        try:
-            stop_off()
-        except Exception:
-            pass
+        try: stop_off()
+        except Exception: pass
         self.app.quit()
 
     def _restart(self):
-        # yeni tray'i baslat, sonra eskisini kapat (os.execv Windows'ta guvenilmez)
         try:
-            DETACHED = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            DETACHED = 0x00000008 | 0x00000200
             subprocess.Popen([sys.executable] + sys.argv, creationflags=DETACHED, close_fds=True)
         except Exception:
             pass
@@ -576,29 +607,16 @@ class AsenaTray:
                 pass
             n = (r.stdout or "0").strip()
             if n.isdigit() and int(n) > 0:
-                subprocess.Popen(["msg", "*", f"AsenaDPI: {n} yeni sürüm var — sağ tık > Güncelle"],
-                                 creationflags=NO_WINDOW)
+                notify("AsenaDPI guncelleme", f"{n} yeni surum var - sag tik > Guncelle")
         except Exception:
             pass
 
-    def on_act(self, reason):
-        if reason == QSystemTrayIcon.Trigger: self.toggle()   # sol tik = ac/kapat
-
-    def toggle(self):
-        if is_on(): stop_off()
-        else: start_on()
-        QTimer.singleShot(600, self.refresh)
-
-    def refresh(self):
-        on = is_on()
-        self.tray.setIcon(self.icon_on if on else self.icon_off)
-        self.act_toggle.setText("Bağlantıyı kes" if on else "Bağlan")
-        self.tray.setToolTip(f"AsenaDPI: {'AÇIK' if on else 'kapalı'}  (sol tık: aç/kapat)")
-
 
 def main():
-    app = QApplication(sys.argv); app.setQuitOnLastWindowClosed(False); app.setApplicationName("AsenaDPI")
-    _t = AsenaTray(app); sys.exit(app.exec())
+    app = QApplication(sys.argv); app.setQuitOnLastWindowClosed(False)
+    app.setApplicationName("AsenaDPI"); app.setWindowIcon(app_qicon())
+    _t = AsenaTray(app)
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":
