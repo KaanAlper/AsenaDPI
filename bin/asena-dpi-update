@@ -8,9 +8,17 @@ USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
 REPO=$(cat "$USER_HOME/.config/asena-dpi/repo_dir" 2>/dev/null || true)
 [ -d "$REPO/.git" ] || { echo "HATA: repo bulunamadi ($REPO). install.sh tekrar calistir." >&2; exit 1; }
 
+GIT() { git -C "$REPO" -c safe.directory="$REPO" "$@"; }
+BEFORE=$(GIT rev-parse HEAD 2>/dev/null || echo x)
+
 echo ">> git pull  ($REPO)"
-# repo kullaniciya ait, biz root'uz -> safe.directory
-sudo -u "$USER_NAME" git -C "$REPO" pull --ff-only 2>&1 || git -C "$REPO" -c safe.directory="$REPO" pull --ff-only
+sudo -u "$USER_NAME" git -C "$REPO" pull --ff-only 2>&1 || GIT pull --ff-only
+
+AFTER=$(GIT rev-parse HEAD 2>/dev/null || echo y)
+if [ "$BEFORE" = "$AFTER" ]; then
+    echo ">> ZATEN GUNCEL (yeni surum yok, yeniden baslatmaya gerek yok)."
+    exit 10   # tray: restart etme, 'zaten guncel' de
+fi
 
 echo ">> scriptler + tray yeniden kuruluyor"
 for f in asena-dpi-on asena-dpi-off asena-dpi-optimize asena-dpi-update asena-dpi-tray; do

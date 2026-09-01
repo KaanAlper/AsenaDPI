@@ -637,9 +637,17 @@ class AppWindow(QWidget):
             self.set_result("Guncelleme kaynagi bulunamadi. install.ps1'i bir kez daha calistir.")
             return
 
+        def head():
+            r = run_hidden(["git", "-C", repo, "rev-parse", "HEAD"])
+            return (r.stdout or "").strip()
+        before = head()
+
         def done(code):
             if code != 0:
                 self.set_result("Guncelleme basarisiz (GitHub'a ulasilamadi mi?). Detaylara bak.")
+                return
+            if head() == before:
+                self.set_result("Zaten guncel - yeni surum yok.")   # degisiklik yok -> restart YOK
                 return
             try:
                 shutil.copy2(os.path.join(repo, "windows", "asena-dpi-tray.pyw"),
@@ -650,7 +658,7 @@ class AppWindow(QWidget):
                 self.set_result(f"Kopyalama hatasi: {e}")
         self.tabs.setCurrentIndex(2)
         self._run("git", ["-C", repo, "pull", "--ff-only"], repo,
-                  "GitHub'dan en son surum indiriliyor...", done)
+                  "GitHub'dan en son surum kontrol ediliyor...", done)
 
     def repair_dns(self):
         if self._busy: return

@@ -478,6 +478,8 @@ class AppWindow(QWidget):
         if code == 0:
             self.set_result("Güncellendi. Uygulama yeniden başlatılıyor…")
             QTimer.singleShot(1200, self.tray._restart)
+        elif code == 10:
+            self.set_result("Zaten güncel — yeni sürüm yok.")
         else:
             self.set_result(f"Güncelleme başarısız (kod {code}).")
 
