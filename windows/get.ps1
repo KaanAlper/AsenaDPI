@@ -35,7 +35,8 @@ if (-not (Test-Path "$Dir\windows\install.ps1")) {
 }
 
 Write-Host ">> Kurulum YONETICI olarak baslatiliyor (UAC onayi cikacak)..." -ForegroundColor Yellow
+# -NoExit: kurulum bitince/hata verince pencere ACIK kalsin (kullanici gorsun)
 Start-Process powershell -Verb RunAs -ArgumentList @(
-    "-NoProfile","-ExecutionPolicy","Bypass","-File","`"$Dir\windows\install.ps1`""
+    "-NoProfile","-NoExit","-ExecutionPolicy","Bypass","-File","`"$Dir\windows\install.ps1`""
 )
 Write-Host ">> Yonetici penceresinde kurulum devam ediyor. Bitince tray tepsiden acilir." -ForegroundColor Green
