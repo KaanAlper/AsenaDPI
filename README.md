@@ -259,13 +259,17 @@ Windows'ta `nftables` yerine zapret'in **`winws.exe`**'i (WinDivert sürücüsü
 desync motoru, GoodbyeDPI'dan genelde daha güçlü — artı DNS zehri için native **DoH** (Windows 11)
 ve aynı PySide6 tray. blockcheck, pakete gömülü zapret Windows araçlarından çalışır.
 
-**Install (Admin PowerShell / yönetici PowerShell):**
+**One command** (normal PowerShell — the installer requests its own admin/UAC):
 
 ```powershell
-git clone https://github.com/KaanAlper/AsenaDPI.git; cd AsenaDPI\windows
-Set-ExecutionPolicy -Scope Process Bypass -Force; .\install.ps1
-schtasks /run /tn AsenaDPI-Tray    # start the tray now / tray'i şimdi başlat
+irm https://raw.githubusercontent.com/KaanAlper/AsenaDPI/master/windows/get.ps1 | iex
 ```
+
+<sub>Or manually: `git clone https://github.com/KaanAlper/AsenaDPI.git; cd AsenaDPI\windows;
+Set-ExecutionPolicy -Scope Process Bypass -Force; .\install.ps1` (in an **admin** PowerShell).</sub>
+
+The installer sets everything up and **starts the tray automatically**; on later boots it autostarts
+elevated (no UAC). A Start-menu entry and desktop shortcut (search "AsenaDPI") are created too.
 
 `install.ps1` downloads the zapret Windows bundle (`winws.exe` + WinDivert + blockcheck), installs
 the tray, and registers it to start **elevated at logon** (a scheduled task — no repeated UAC), so
