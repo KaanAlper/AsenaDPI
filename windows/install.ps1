@@ -82,9 +82,11 @@ Get-ChildItem -Path $tmp -Force | Where-Object { $_.Name -ne ".git" -and $_.Name
     ForEach-Object { Copy-Item $_.FullName $InstallDir -Recurse -Force }
 if (-not (Test-Path "$InstallDir\zapret-winws\winws.exe")) { Die "Kopyalama basarisiz -> $InstallDir\zapret-winws" }
 
-# --- 2) tray + config ---
+# --- 2) tray + config + ikon ---
 Say "Tray -> $InstallDir"
 Copy-Item "$RepoDir\asena-dpi-tray.pyw" "$InstallDir\asena-dpi-tray.pyw" -Force
+$Ico = "$InstallDir\asena-dpi.ico"
+if (Test-Path "$RepoDir\asena-dpi.ico") { Copy-Item "$RepoDir\asena-dpi.ico" $Ico -Force }
 
 New-Item -ItemType Directory -Force -Path $Cfg | Out-Null
 Set-Content "$Cfg\repo_dir" -Value $RepoRoot -Encoding ascii   # 'Guncelle' bunu kullanir (git pull)
@@ -113,6 +115,29 @@ try {
 } catch {
     Say "UYARI: autostart gorevi kurulamadi ($($_.Exception.Message)). Tray'i elle baslatabilirsin:"
     Write-Host "   `"$pyw`" `"$InstallDir\asena-dpi-tray.pyw`"" -ForegroundColor Yellow
+}
+
+# --- 3b) Baslat menusu + masaustu kisayolu (aranabilir, ikonlu) ---
+# Kisayol schtasks /run ile tray'i YONETICI gorevle baslatir (UAC sormaz). Ikon = kurt+DPI.
+Say "Kisayollar (Baslat menusu + masaustu)..."
+try {
+    $ws = New-Object -ComObject WScript.Shell
+    $iconRef = $(if (Test-Path $Ico) { "$Ico,0" } else { "$pyw,0" })
+    $targets = @(
+        "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\AsenaDPI.lnk",
+        "$([Environment]::GetFolderPath('Desktop'))\AsenaDPI.lnk"
+    )
+    foreach ($lnk in $targets) {
+        $sc = $ws.CreateShortcut($lnk)
+        $sc.TargetPath = "$env:SystemRoot\System32\schtasks.exe"
+        $sc.Arguments = "/run /tn AsenaDPI-Tray"
+        $sc.IconLocation = $iconRef
+        $sc.Description = "AsenaDPI - DPI/DNS bypass"
+        $sc.WindowStyle = 7        # minimized -> schtasks konsol parlamasi minimum
+        $sc.Save()
+    }
+} catch {
+    Say "UYARI: kisayol olusturulamadi ($($_.Exception.Message))."
 }
 
 # --- 4) tray'i SIMDI baslat (sonraki acilista gorev zaten baslatir) ---
