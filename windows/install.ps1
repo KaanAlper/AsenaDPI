@@ -22,7 +22,8 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Say "git yok -> winget ile kuruluyor..."
     winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements | Out-Null
 }
-$py = (Get-Command pythonw -ErrorAction SilentlyContinue) ?? (Get-Command python -ErrorAction SilentlyContinue)
+$py = Get-Command pythonw -ErrorAction SilentlyContinue
+if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
 if (-not $py) {
     Say "Python yok -> winget ile kuruluyor..."
     winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements | Out-Null
@@ -67,10 +68,10 @@ MODE=blacklist
 HTTP=1
 HTTP2=1
 HTTP3=bypass
-"@ | Set-Content "$Cfg\settings.conf" -Encoding utf8
+"@ | Set-Content "$Cfg\settings.conf" -Encoding ascii
 }
 if (-not (Test-Path "$Cfg\tcp443.conf")) {
-    "--dpi-desync=fakedsplit --dpi-desync-fooling=md5sig --dpi-desync-split-pos=1" | Set-Content "$Cfg\tcp443.conf" -Encoding utf8
+    "--dpi-desync=fakedsplit --dpi-desync-fooling=md5sig --dpi-desync-split-pos=1" | Set-Content "$Cfg\tcp443.conf" -Encoding ascii
 }
 
 # --- 3) tray'i logon'da YONETICI olarak baslatan gorev (UAC'siz) ---

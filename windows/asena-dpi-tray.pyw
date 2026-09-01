@@ -47,7 +47,7 @@ def ps(cmd):
 def load_settings() -> dict:
     s = dict(DEFAULTS)
     try:
-        for line in SETTINGS.read_text(encoding="utf-8").splitlines():
+        for line in SETTINGS.read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
@@ -71,7 +71,7 @@ def save_settings(s: dict):
 
 def tcp443_strategy() -> str:
     try:
-        for line in STRAT_FILE.read_text(encoding="utf-8").splitlines():
+        for line in STRAT_FILE.read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
             if line and not line.startswith("#"):
                 return line
@@ -84,7 +84,7 @@ def clean_hostlist():
     """*. ve #yorum kaldir -> winws --hostlist icin."""
     try:
         out = []
-        for ln in BLACKLIST.read_text(encoding="utf-8").splitlines():
+        for ln in BLACKLIST.read_text(encoding="utf-8-sig").splitlines():
             ln = ln.split("#", 1)[0].strip().lstrip("*.").strip().lower().strip(".")
             if "." in ln:
                 out.append(ln)
