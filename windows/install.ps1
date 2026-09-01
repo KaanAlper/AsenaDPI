@@ -28,7 +28,9 @@ function Stop-AsenaDPI {
         Where-Object { $_.CommandLine -and $_.CommandLine -like "*asena-dpi-tray*" } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
     Get-Process winws -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 900
+    # WinDivert KERNEL surucusu winws olunce hemen unload olmayabilir -> WinDivert64.sys kilitli kalir.
+    foreach ($svc in @("WinDivert", "WinDivert1.4", "windivert")) { & sc.exe stop $svc 2>&1 | Out-Null }
+    Start-Sleep -Milliseconds 1500
 }
 
 # --- 0) git ---
@@ -153,8 +155,10 @@ if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
 Stop-AsenaDPI   # kopyalamadan ONCE winws+tray durdur (yoksa WinDivert64.sys kilitli -> kopya hatasi)
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Say "Bundle kopyalaniyor -> $InstallDir (zapret-winws + blockcheck + cygwin + tools)..."
+# -ErrorAction SilentlyContinue: WinDivert64.sys surucu yuklu ise kilitli olabilir; ZATEN ayni
+# dosya orada oldugundan uzerine yazamamasi zararsiz (kritik winws.exe kontrolu asagida).
 Get-ChildItem -Path $tmp -Force | Where-Object { $_.Name -ne ".git" -and $_.Name -ne ".github" } |
-    ForEach-Object { Copy-Item $_.FullName $InstallDir -Recurse -Force }
+    ForEach-Object { Copy-Item $_.FullName $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
 if (-not (Test-Path "$InstallDir\zapret-winws\winws.exe")) { Die "Kopyalama basarisiz -> $InstallDir\zapret-winws" }
 
 # --- 2) tray + config + ikon ---
