@@ -1,4 +1,4 @@
-# AsenaDPI — Windows kurulum (winws/WinDivert + DoH + tray).
+# AsenaDPI - Windows kurulum (winws/WinDivert + DoH + tray).
 # Yonetici PowerShell'de calistir:
 #   Set-ExecutionPolicy -Scope Process Bypass -Force; .\install.ps1
 #
@@ -6,7 +6,7 @@
 # kullanici config'i olustur, tray'i logon'da YONETICI olarak baslatan gorev ekle (UAC'siz),
 # Python + PySide6 kontrol.
 #Requires -RunAsAdministrator
-# NOT: $ErrorActionPreference'i STOP yapMIYORUZ — winget/git/python/pip stderr'e yazinca
+# NOT: $ErrorActionPreference'i STOP yapMIYORUZ - winget/git/python/pip stderr'e yazinca
 # PS 5.1 scripti oldururdu. Kritik adimlari asagida acikca 'Die' ile kontrol ediyoruz.
 
 $Bundle     = "https://github.com/bol-van/zapret-win-bundle"
@@ -63,7 +63,7 @@ Say "Python: $pyExe"
 # --- 0c) PySide6 (exit code ile kontrol; traceback scripti oldurmez) ---
 Say "PySide6 kontrol..."
 if ((Nat $pyExe @("-c","import PySide6.QtWidgets")) -ne 0) {
-    Say "PySide6 indiriliyor (~250 MB — baglantiya gore birkac dakika, ILERLEME asagida)..."
+    Say "PySide6 indiriliyor (~250 MB - baglantiya gore birkac dakika, ILERLEME asagida)..."
     & $pyExe -m pip install --upgrade pip
     & $pyExe -m pip install PySide6      # ciktiyi GOSTER (kara kutu olmasin)
     if ((Nat $pyExe @("-c","import PySide6.QtWidgets")) -ne 0) {
@@ -85,7 +85,7 @@ Say "winws + WinDivert -> $InstallDir"
 Copy-Item "$winwsDir\*" $InstallDir -Recurse -Force
 if (-not (Test-Path "$InstallDir\winws.exe")) { Die "winws.exe kopyalanamadi -> $InstallDir" }
 
-# blockcheck (optimize icin) — bundle'da varsa
+# blockcheck (optimize icin) - bundle'da varsa
 $bc = Get-ChildItem -Path $tmp -Recurse -Filter "blockcheck.cmd" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($bc) { Copy-Item $bc.Directory.FullName "$InstallDir\blockcheck" -Recurse -Force }
 
@@ -94,7 +94,7 @@ Say "Tray -> $InstallDir"
 Copy-Item "$RepoDir\asena-dpi-tray.pyw" "$InstallDir\asena-dpi-tray.pyw" -Force
 
 New-Item -ItemType Directory -Force -Path $Cfg | Out-Null
-Set-Content "$Cfg\repo_dir" -Value $RepoRoot -Encoding ascii   # 'Güncelle' bunu kullanır (git pull)
+Set-Content "$Cfg\repo_dir" -Value $RepoRoot -Encoding ascii   # 'Guncelle' bunu kullanir (git pull)
 if (-not (Test-Path "$Cfg\blacklist.txt")) { Copy-Item "$RepoRoot\config\blacklist.txt" "$Cfg\blacklist.txt" -Force }
 if (-not (Test-Path "$Cfg\settings.conf")) {
 @"
@@ -126,4 +126,4 @@ Say "KURULUM TAMAM. Tray'i simdi baslat:"
 Write-Host "   schtasks /run /tn AsenaDPI-Tray" -ForegroundColor Yellow
 Write-Host "   (ya da: `"$pyw`" `"$InstallDir\asena-dpi-tray.pyw`")" -ForegroundColor Gray
 Write-Host ""
-Write-Host "   Tray: SOL tik = ayarlar · SAG tik = menu · 'En iyi strateji' = blockcheck" -ForegroundColor Gray
+Write-Host "   Tray: SOL tik = ac/kapat  SAG tik = menu (ayarlar, en iyi strateji, guncelle)" -ForegroundColor Gray
