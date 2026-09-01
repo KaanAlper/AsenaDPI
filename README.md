@@ -249,6 +249,36 @@ cd AsenaDPI && ./uninstall.sh
 
 ---
 
+## Windows
+
+Windows uses zapret's **`winws.exe`** (WinDivert driver) instead of `nftables` — same desync
+engine, generally stronger than GoodbyeDPI — plus native **DoH** (Windows 11) for DNS poisoning,
+and the same PySide6 tray. blockcheck runs from the bundled zapret Windows tools.
+
+Windows'ta `nftables` yerine zapret'in **`winws.exe`**'i (WinDivert sürücüsü) kullanılır — aynı
+desync motoru, GoodbyeDPI'dan genelde daha güçlü — artı DNS zehri için native **DoH** (Windows 11)
+ve aynı PySide6 tray. blockcheck, pakete gömülü zapret Windows araçlarından çalışır.
+
+**Install (Admin PowerShell / yönetici PowerShell):**
+
+```powershell
+git clone https://github.com/KaanAlper/AsenaDPI.git; cd AsenaDPI\windows
+Set-ExecutionPolicy -Scope Process Bypass -Force; .\install.ps1
+schtasks /run /tn AsenaDPI-Tray    # start the tray now / tray'i şimdi başlat
+```
+
+`install.ps1` downloads the zapret Windows bundle (`winws.exe` + WinDivert + blockcheck), installs
+the tray, and registers it to start **elevated at logon** (a scheduled task — no repeated UAC), so
+the tray manages `winws` and DoH directly. Left-click = settings, right-click = menu, same as Linux.
+
+> [!NOTE]
+> Native DoH needs **Windows 11** (Windows 10 has no built-in DoH). Requires Python 3 + PySide6
+> (the installer fetches them via winget/pip if missing). This is a fresh v1 — report anything that
+> breaks. / Native DoH **Windows 11** ister; Python 3 + PySide6 gerekir (installer winget/pip ile
+> kurar). Yeni v1 — bozulan olursa bildir.
+
+---
+
 <div align="center">
 
 Built on [zapret](https://github.com/bol-van/zapret) by bol-van · DPI/DNS bypass for Linux · MIT
