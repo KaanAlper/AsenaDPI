@@ -52,11 +52,13 @@ networks. AsenaDPI handles both at once:
 
 ### Installation & setup
 
-**One command:**
+**One command (Linux):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaDPI/master/get.sh | bash
 ```
+
+<sub>On **Windows** use the PowerShell one-liner in the [Windows](#windows) section instead — this `curl … | bash` is Linux only.</sub>
 
 <sub>Or manually: `git clone https://github.com/KaanAlper/AsenaDPI.git && cd AsenaDPI && ./install.sh`
 — run it **without** sudo; it calls sudo itself.</sub>
@@ -161,11 +163,13 @@ AsenaDPI ikisini birden halleder:
 
 ### Kurulum
 
-**Tek komut:**
+**Tek komut (Linux):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KaanAlper/AsenaDPI/master/get.sh | bash
 ```
+
+<sub>**Windows** için bunun yerine [Windows](#windows) bölümündeki PowerShell tek-satırını kullan — bu `curl … | bash` yalnız Linux.</sub>
 
 <sub>Ya da elle: `git clone https://github.com/KaanAlper/AsenaDPI.git && cd AsenaDPI && ./install.sh`
 — **sudo İLE DEĞİL**, kendisi sudo çağırır.</sub>
