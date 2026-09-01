@@ -9,6 +9,16 @@ BLOCKCHECK="$ZAPRET_BASE/blockcheck.sh"
 export NFQWS="${NFQWS:-$ZAPRET_BASE/nfq/nfqws}"
 [ -f "$BLOCKCHECK" ] || { echo "HATA: blockcheck yok: $BLOCKCHECK (install.sh calistir)" >&2; exit 1; }
 
+# blockcheck 'prerequisites': nfqws + mdig(DNS) + tpws SART. Eski kurulumlar yalniz nfqws
+# derlemis olabilir -> eksikse burada derle (self-heal; bu script root calisir).
+for sub in mdig tpws nfq; do
+  bin="$sub"; [ "$sub" = nfq ] && bin=nfqws
+  if [ ! -x "$ZAPRET_BASE/$sub/$bin" ]; then
+    echo ">> $bin eksik, derleniyor (blockcheck icin)..."
+    make -C "$ZAPRET_BASE/$sub" >/dev/null 2>&1 || echo "   UYARI: $bin derlenemedi (gelistirme kutuphanesi eksik olabilir)."
+  fi
+done
+
 USER_NAME="${SUDO_USER:-$(id -nu 1000)}"
 USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
 CFG="$USER_HOME/.config/asena-dpi"
