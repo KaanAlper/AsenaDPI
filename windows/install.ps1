@@ -47,8 +47,9 @@ function Test-Py {
     if (-not $exe) { return $false }
     try {
         if (-not (Test-Path $exe)) { return $false }
-        if ((Get-Item $exe).Length -lt 20000) { return $false }   # stub 0-byte -> ele
-        & $exe -c "import sys" 2>&1 | Out-Null
+        if ((Get-Item $exe).Length -lt 20000) { return $false }   # 0-byte Store stub -> ele
+        # SADECE CPython: PyPy vb.'de PySide6 wheel'i yok (exit 0 sadece cpython'da)
+        & $exe -c "import sys; sys.exit(0 if sys.implementation.name=='cpython' else 3)" 2>&1 | Out-Null
         return ($LASTEXITCODE -eq 0)
     } catch { return $false }
 }
@@ -91,22 +92,25 @@ Say "PySide6 (pip - kuruluysa aninda gecer, degilse ~250 MB indirir)..."
 # --- 1) zapret-win-bundle indir (winws + WinDivert + blockcheck + cygwin) ---
 # TUM bundle'i kopyala: blockcheck.cmd kardes ..\cygwin ve ..\tools'a baglidir; yapiyi korumazsak
 # "sistem belirtilen yolu bulamiyor" der. Yapi: zapret-winws\winws.exe, blockcheck\, cygwin\, tools\
+# NOT: git ciktisi GORUNUR (hata gizlenmesin). TEMP bozuksa Windows\Temp'e dus.
 $tmp = "$env:TEMP\zapret-win-bundle"
+try { New-Item -ItemType Directory -Force -Path (Split-Path $tmp) -ErrorAction Stop | Out-Null }
+catch { $tmp = "$env:SystemRoot\Temp\zapret-win-bundle" }
+
 if (Test-Path "$tmp\.git") {
-    Say "bundle guncelleniyor..."; Nat "git" @("-C",$tmp,"pull","--ff-only") | Out-Null
+    Say "bundle guncelleniyor..."; & git -C $tmp pull --ff-only
 } else {
-    Say "zapret-win-bundle indiriliyor (~60 MB)..."
-    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue   # yarim/bos kalinti varsa temizle
-    Nat "git" @("clone","--depth","1",$Bundle,$tmp) | Out-Null
+    Say "zapret-win-bundle indiriliyor (~60 MB, biraz surer)..."
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    & git clone --depth 1 $Bundle $tmp
 }
-# eksik/yarim kaldiysa TEMIZ bir kez daha dene
 if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
     Say "bundle eksik -> temiz yeniden indiriliyor..."
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-    Nat "git" @("clone","--depth","1",$Bundle,$tmp) | Out-Null
+    & git clone --depth 1 $Bundle $tmp
 }
 if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
-    Die "Bundle indirilemedi ($tmp). Internet/git'i kontrol et; '$tmp' klasorunu silip tekrar dene."
+    Die "Bundle indirilemedi ($tmp). Yukaridaki git hatasina bak. github.com'a erisim / disk / '$tmp' izni kontrol et."
 }
 
 Stop-AsenaDPI   # kopyalamadan ONCE winws+tray durdur (yoksa WinDivert64.sys kilitli -> kopya hatasi)
