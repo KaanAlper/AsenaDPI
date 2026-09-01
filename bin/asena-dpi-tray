@@ -15,7 +15,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame, QPlainTextEdit,
-    QProgressBar, QTabWidget, QLineEdit,
+    QProgressBar, QTabWidget, QLineEdit, QMessageBox,
 )
 from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont, QTextCursor, QImage
 from PySide6.QtCore import QTimer, Qt, QPointF, QProcess, QRect
@@ -105,10 +105,9 @@ def save_settings(s: dict):
         encoding="utf-8")
 
 
-DEFAULT_TCP443 = "--dpi-desync=fakedsplit --dpi-desync-fooling=md5sig --dpi-desync-split-pos=1"
-
-
 def load_strategy() -> str:
+    # VARSAYILAN YOK: strateji dosyasi bos/yoksa "" doner (temiz kurulum -> kullanici
+    # 'En iyi ayar'i calistirana kadar 443 desync uygulanmaz).
     try:
         for line in STRAT_FILE.read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
@@ -116,7 +115,7 @@ def load_strategy() -> str:
                 return line
     except FileNotFoundError:
         pass
-    return DEFAULT_TCP443
+    return ""
 
 
 def save_strategy(s: str):
@@ -413,17 +412,15 @@ class AppWindow(QWidget):
 
     def _strat_apply(self):
         if self._busy: return
-        s = self.strat.text().strip()
-        reset = not s
-        if reset:                                  # boş bırakıldı -> varsayılana dön
-            s = DEFAULT_TCP443; self.strat.setText(s)
+        s = self.strat.text().strip()          # bos olabilir: 443 desync'siz (sadece DNS/HTTP/QUIC)
         save_strategy(s); self._strat_saved = s
         self.btn_sok.hide(); self.btn_sundo.hide()
-        done_msg = "Varsayılan stratejiye dönüldü." if reset else "Strateji uygulandı."
+        done_msg = "Strateji temizlendi (443 desync kapalı)." if not s else "Strateji uygulandı."
+        save_msg = "Temizlendi ve kaydedildi (443 desync kapalı)." if not s else "Strateji kaydedildi."
         if is_on():
-            self.act.setText("Strateji uygulanıyor…"); self._seq([OFF, ON], lambda: self.act.setText(done_msg))
+            self.act.setText("Uygulanıyor…"); self._seq([OFF, ON], lambda: self.act.setText(done_msg))
         else:
-            self.act.setText("Varsayılana dönüldü ve kaydedildi." if reset else "Strateji kaydedildi.")
+            self.act.setText(save_msg)
 
     def _strat_revert(self):
         self.strat.setText(self._strat_saved); self.btn_sok.hide(); self.btn_sundo.hide()
@@ -549,6 +546,24 @@ class AsenaTray:
         QTimer.singleShot(8000, self._autocheck)
         if autoconnect_on() and not is_on():
             QTimer.singleShot(1500, self._autoconnect)
+        if not load_strategy():                       # temiz kurulum: strateji yok -> yonlendir
+            QTimer.singleShot(1800, self._first_setup_prompt)
+
+    def _first_setup_prompt(self):
+        if load_strategy():   # bu arada bulunmus olabilir
+            return
+        m = QMessageBox()
+        m.setWindowTitle("AsenaDPI — kurulum")
+        m.setWindowIcon(self.icon_on)
+        m.setIcon(QMessageBox.Information)
+        m.setText("Temiz kurulum: henüz DPI stratejisi yok.")
+        m.setInformativeText("Ağına en uygun ayarı otomatik bulmak için aşağıdaki düğmeye bas.\n"
+                             "(Bulunana kadar yalnız DNS koruması aktif; bazı siteler açılmayabilir.)")
+        btn = m.addButton("En iyi ayarı bul", QMessageBox.AcceptRole)
+        m.addButton("Sonra", QMessageBox.RejectRole)
+        m.exec()
+        if m.clickedButton() is btn:
+            self.open(1)
 
     def _autoconnect(self):
         if autoconnect_on() and not is_on():

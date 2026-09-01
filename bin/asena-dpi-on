@@ -31,12 +31,12 @@ CLEAN="$STATE/hostlist.txt"
 sed -e 's/#.*//' -e 's/\r//' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^\*\.//' "$HOSTLIST" \
     | grep -F '.' | sort -u > "$CLEAN"
 
-# TCP 443 (http2) desync stratejisi: config'ten (blockcheck/optimize yazar), yoksa saglam varsayilan
+# TCP 443 (http2) desync stratejisi: config'ten (blockcheck/optimize yazar). VARSAYILAN YOK —
+# bos ise 443 desync uygulanmaz (temiz kurulum: kullanici 'En iyi ayar'i calistirana kadar).
 STRAT_FILE="$CFG/tcp443.conf"
+TCP443=""
 if [ -f "$STRAT_FILE" ] && grep -qvE '^#|^[[:space:]]*$' "$STRAT_FILE"; then
     TCP443="$(grep -vE '^#|^[[:space:]]*$' "$STRAT_FILE" | head -1)"
-else
-    TCP443="--dpi-desync=fakedsplit --dpi-desync-fooling=md5sig --dpi-desync-split-pos=1"
 fi
 
 # blacklist modda hostlist filtresi; full modda YOK (tum trafik)
@@ -74,7 +74,7 @@ EOF
 # --- nfqws args ---
 NF=()
 [ "$HTTP" = 1 ]  && NF+=(--filter-tcp=80 --dpi-desync=fake,multisplit --dpi-desync-split-pos=method+2 --dpi-desync-fooling=md5sig "${HL[@]}" --new)
-[ "$HTTP2" = 1 ] && NF+=(--filter-tcp=443 $TCP443 "${HL[@]}" --new)
+[ "$HTTP2" = 1 ] && [ -n "$TCP443" ] && NF+=(--filter-tcp=443 $TCP443 "${HL[@]}" --new)
 [ "$HTTP3" = bypass ] && NF+=(--filter-udp=443 --dpi-desync=fake --dpi-desync-repeats=6 "${HL[@]}" --new)
 [ ${#NF[@]} -gt 0 ] && [ "${NF[${#NF[@]}-1]}" = "--new" ] && unset 'NF[${#NF[@]}-1]'
 

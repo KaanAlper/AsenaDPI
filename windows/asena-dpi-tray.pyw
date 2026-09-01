@@ -11,7 +11,7 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QSystemTrayIcon, QMenu, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame, QPlainTextEdit,
-    QProgressBar, QTabWidget, QLineEdit,
+    QProgressBar, QTabWidget, QLineEdit, QMessageBox,
 )
 from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont, QTextCursor, QImage
 from PySide6.QtCore import QTimer, Qt, QPointF, QProcess, QRect
@@ -43,7 +43,6 @@ LBL = {
     "HTTP3": ("HTTP/3-QUIC", {"bypass": "Bypass", "off": "Kapali", "block": "Engelle"}),
 }
 ACCENT = "#26A69A"
-DEFAULT_TCP443 = "--dpi-desync=fakedsplit --dpi-desync-fooling=md5sig --dpi-desync-split-pos=1"
 _TRAY = None
 
 
@@ -138,6 +137,7 @@ def save_settings(s: dict):
 
 
 def tcp443_strategy() -> str:
+    # VARSAYILAN YOK: bos ise "" (temiz kurulum -> 'En iyi ayar' bulana kadar 443 desync yok).
     try:
         for line in STRAT_FILE.read_text(encoding="utf-8-sig").splitlines():
             line = line.strip()
@@ -145,7 +145,7 @@ def tcp443_strategy() -> str:
                 return line
     except FileNotFoundError:
         pass
-    return DEFAULT_TCP443
+    return ""
 
 
 def save_strategy(s: str):
@@ -242,8 +242,9 @@ def winws_args(s):
     if s["HTTP"] == "1":
         a += ["--filter-tcp=80", "--dpi-desync=fake,multisplit", "--dpi-desync-split-pos=method+2",
               "--dpi-desync-fooling=md5sig"] + hl + ["--new"]
-    if s["HTTP2"] == "1":
-        a += ["--filter-tcp=443"] + tcp443_strategy().split() + hl + ["--new"]
+    strat = tcp443_strategy()
+    if s["HTTP2"] == "1" and strat:        # bos strateji -> 443 desync yok (temiz kurulum)
+        a += ["--filter-tcp=443"] + strat.split() + hl + ["--new"]
     if s["HTTP3"] == "bypass":
         a += ["--filter-udp=443", "--dpi-desync=fake", "--dpi-desync-repeats=6"] + hl + ["--new"]
     if a and a[-1] == "--new":
@@ -551,16 +552,14 @@ class AppWindow(QWidget):
 
     def _strat_apply(self):
         if self._busy: return
-        s = self.strat.text().strip()
-        reset = not s
-        if reset:                                  # bos birakildi -> varsayilana don
-            s = DEFAULT_TCP443; self.strat.setText(s)
+        s = self.strat.text().strip()          # bos olabilir: 443 desync'siz (sadece DNS/HTTP/QUIC)
         save_strategy(s); self._strat_saved = s; self.btn_sok.hide(); self.btn_sundo.hide()
-        done_msg = "Varsayilan stratejiye donuldu." if reset else "Strateji uygulandi."
+        done_msg = "Strateji temizlendi (443 desync kapali)." if not s else "Strateji uygulandi."
+        save_msg = "Temizlendi ve kaydedildi (443 desync kapali)." if not s else "Strateji kaydedildi."
         if is_on():
-            self.act.setText("Strateji uygulaniyor..."); self._async(lambda: (stop_off(), start_on()), done_msg)
+            self.act.setText("Uygulaniyor..."); self._async(lambda: (stop_off(), start_on()), done_msg)
         else:
-            self.act.setText("Varsayilana donuldu ve kaydedildi." if reset else "Strateji kaydedildi.")
+            self.act.setText(save_msg)
 
     def _strat_revert(self):
         self.strat.setText(self._strat_saved); self.btn_sok.hide(); self.btn_sundo.hide()
@@ -640,9 +639,9 @@ class AppWindow(QWidget):
             self.set_result("En iyi ayar bulundu ve uygulandi. Simdi siteyi/uygulamayi dene.")
         elif not ran:
             # blockcheck calismadi/hemen cikti -> YANLIS 'DNS yeter' mesaji verme.
-            self.set_result("Test tamamlanamadi (blockcheck bir kac saniyede cikti - dosyalar eksik olabilir). "
-                            "Simdilik varsayilan DPI + DNS korumasi uygulandi; Discord'u yine de dene. "
-                            "Duzelmezse Detaylar'daki hataya bak ya da install.ps1'i tekrar calistir.")
+            self.set_result("Test tamamlanamadi (blockcheck bir kac saniyede cikti - gerekli dosyalar "
+                            "eksik olabilir: mdig/tpws). Detaylar'daki hataya bak ya da install.ps1'i "
+                            "tekrar calistir. Su an yalniz DNS korumasi aktif.")
         else:
             # blockcheck kostu ama TCP'de DPI engeli bulamadi. Discord QUIC (UDP443) kullanir ve blockcheck
             # QUIC'i TEST ETMEZ; ag QUIC'i karadelige atiyorsa uygulama TCP'ye dusmeden takilir -> 'acilmiyor'.
@@ -733,6 +732,24 @@ class AsenaTray:
         QTimer.singleShot(8000, self._autocheck)
         if autoconnect_on() and not is_on():
             QTimer.singleShot(1500, self._autoconnect)
+        if not tcp443_strategy():                     # temiz kurulum: strateji yok -> yonlendir
+            QTimer.singleShot(1800, self._first_setup_prompt)
+
+    def _first_setup_prompt(self):
+        if tcp443_strategy():
+            return
+        m = QMessageBox()
+        m.setWindowTitle("AsenaDPI - kurulum")
+        m.setWindowIcon(self.icon_on)
+        m.setIcon(QMessageBox.Information)
+        m.setText("Temiz kurulum: henuz DPI stratejisi yok.")
+        m.setInformativeText("Agina en uygun ayari otomatik bulmak icin asagidaki dugmeye bas.\n"
+                             "(Bulunana kadar yalniz DNS korumasi aktif; bazi siteler acilmayabilir.)")
+        btn = m.addButton("En iyi ayari bul", QMessageBox.AcceptRole)
+        m.addButton("Sonra", QMessageBox.RejectRole)
+        m.exec()
+        if m.clickedButton() is btn:
+            self.open(1)
 
     def _autoconnect(self):
         if autoconnect_on() and not is_on():

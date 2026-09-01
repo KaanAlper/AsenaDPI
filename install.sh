@@ -90,6 +90,16 @@ else
 fi
 [ -x "$ZAPRET_DIR/nfq/nfqws" ] || $SUDO install -Dm755 "$BINDIR/nfqws" "$ZAPRET_DIR/nfq/nfqws"
 
+# blockcheck ('En iyi ayar') mdig (DNS) + tpws de ister — yoksa 'prerequisites' hatasi verip
+# HIC calismaz (sonuc: sahte 'strateji bulunamadi'). Zapret agacinda yerinde derle.
+for sub in mdig tpws; do
+  if $SUDO make -C "$ZAPRET_DIR/$sub" >/dev/null 2>&1 && [ -x "$ZAPRET_DIR/$sub/$sub" ]; then
+    say "$sub derlendi ✓ (blockcheck icin)"
+  else
+    say "UYARI: $sub derlenemedi — 'En iyi ayar' (blockcheck) calismayabilir."
+  fi
+done
+
 # --- 3) scriptler + tray ---
 say "Scriptler kuruluyor -> $BINDIR"
 for f in asena-dpi-on asena-dpi-off asena-dpi-optimize asena-dpi-update asena-dpi-tray; do

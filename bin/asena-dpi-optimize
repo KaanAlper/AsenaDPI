@@ -31,15 +31,19 @@ sleep 1
 echo ">> blockcheck calisiyor ($DOMAINS_IN) — birkaç dakika sürebilir..."
 for d in $DOMAINS_IN; do
   echo "   --- $d ---"
+  # ciktiyi HEM $LOG'a HEM stdout'a (tray 'Detaylar') ver -> ne oldugu gorunur olsun
   yes '' | DOMAINS="$d" ENABLE_HTTP=0 ENABLE_HTTPS_TLS12=1 ENABLE_HTTPS_TLS13=1 \
     ENABLE_HTTP3=0 SCANLEVEL=standard IPV=4 IPVS=4 REPEATS=2 PARALLEL=0 \
-    timeout 900 "$BLOCKCHECK" 2>&1 | tee -a "$LOG" | grep -E "AVAILABLE|working strategy" >/dev/null || true
+    timeout 900 "$BLOCKCHECK" 2>&1 | tee -a "$LOG" || true
 done
+# tam ciktiyi kalici tut (teshis icin): ~/.config/asena-dpi/last-blockcheck.log
+cp -f "$LOG" "$CFG/last-blockcheck.log" 2>/dev/null || true
+chown "$USER_NAME:$(id -gn "$USER_NAME")" "$CFG/last-blockcheck.log" 2>/dev/null || true
 
-# blockcheck GERCEKTEN kostu mu? (test isaretleri yoksa hemen cikmis/basarisiz demektir ->
-# 'DNS yeter' deme). reapply'dan ONCE bak.
+# blockcheck GERCEKTEN TEST YAPTI mi? ('checking' baslangicta her zaman basilir, sayma;
+# gercek test isareti: curl_test / SUMMARY / (UN)AVAILABLE). yoksa hemen cikmis/basarisiz.
 RAN=0
-grep -qiE 'curl_test|\* SUMMARY|AVAILABLE|UNAVAILABLE|checking' "$LOG" && RAN=1
+grep -qiE 'curl_test|\* SUMMARY|\bAVAILABLE\b|\bUNAVAILABLE\b' "$LOG" && RAN=1
 
 # --- en iyi stratejiyi sec (TLS1.3'te calisan + agdan-bagimsiz fooling'i tercih et) ---
 BEST=$(python3 - "$LOG" <<'PY'
@@ -90,8 +94,8 @@ PY
 ) || BEST=""
 
 if [ -z "$BEST" ]; then
-  # taramadan once acikti ise bypass'i geri ac
-  [ "$WAS_ACTIVE" = 1 ] && { echo ">> bypass geri aciliyor..."; /usr/local/bin/asena-dpi-on >/dev/null 2>&1 || true; }
+  # tarama bitti -> korumayi HER ZAMAN geri ac (kapaliyken baslatilsa bile acik kalsin)
+  echo ">> koruma aciliyor..."; /usr/local/bin/asena-dpi-on >/dev/null 2>&1 || true
   if [ "$RAN" = 1 ]; then
     echo "!! blockcheck kostu ama calisan nfqws stratejisi bulamadi. Mevcut ayar korunuyor."
     echo "   (Bu agda TCP DPI olmayabilir; yalniz DNS zehri ise DoT zaten hallediyor. Site/uygulama"
@@ -115,8 +119,6 @@ rm -f "$LOG"
 echo ">> EN IYI STRATEJI: $BEST"
 echo ">> yazildi: $CONF"
 
-# taramadan once acikti ise yeni strateji ile geri uygula
-if [ "$WAS_ACTIVE" = 1 ]; then
-  echo ">> uygulaniyor (yeni strateji ile baslat)..."
-  /usr/local/bin/asena-dpi-on
-fi
+# tarama bitti -> yeni strateji ile korumayi HER ZAMAN ac (off baslatilsa bile)
+echo ">> uygulaniyor (yeni strateji ile baslat)..."
+/usr/local/bin/asena-dpi-on
