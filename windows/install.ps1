@@ -61,7 +61,7 @@ if (-not (Test-Path $pyw)) { $pyw = $pyExe }
 Say "Python: $pyExe"
 
 # --- 0c) PySide6 (exit code ile kontrol; traceback scripti oldurmez) ---
-# PySide6 — import KONTROLU YOK (Qt DLL yuklemesi Defender ile dakikalarca asili kalabiliyordu).
+# PySide6 - import KONTROLU YOK (Qt DLL yuklemesi Defender ile dakikalarca asili kalabiliyordu).
 # Dogrudan pip: kuruluysa "already satisfied" deyip ~2sn'de gecer, degilse kurar. Qt yuklenmez.
 Say "PySide6 (pip - kuruluysa aninda gecer, degilse ~250 MB indirir)..."
 & $pyExe -m pip install --upgrade pip
