@@ -113,6 +113,7 @@ fi
 say "Ayar/blacklist -> $CFG"
 mkdir -p "$CFG"
 echo "$REPO_DIR" > "$CFG/repo_dir"   # 'Güncelle' bunu kullanır (git pull)
+[ -f "$REPO_DIR/config/asena-dpi.png" ] && cp -f "$REPO_DIR/config/asena-dpi.png" "$CFG/asena-dpi.png"   # pencere ikonu (kurt+DPI)
 [ -f "$CFG/blacklist.txt" ] || cp "$REPO_DIR/config/blacklist.txt" "$CFG/blacklist.txt"
 [ -f "$CFG/settings.conf" ] || cat > "$CFG/settings.conf" <<EOF
 # AsenaDPI ayarlari (tray yazar)
@@ -131,7 +132,8 @@ Type=Application
 Name=AsenaDPI
 Comment=DPI/DNS bypass tray
 Exec=$BINDIR/asena-dpi-tray
-Icon=network-vpn
+Icon=$CFG/asena-dpi.png
+StartupWMClass=asena-dpi
 Terminal=false
 X-GNOME-Autostart-enabled=true
 EOF
