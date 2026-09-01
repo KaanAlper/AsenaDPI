@@ -6,29 +6,39 @@
 # kullanici config'i olustur, tray'i logon'da YONETICI olarak baslatan gorev ekle (UAC'siz),
 # Python + PySide6 kontrol.
 #Requires -RunAsAdministrator
-$ErrorActionPreference = "Stop"
+# NOT: $ErrorActionPreference'i STOP yapMIYORUZ — winget/git/python/pip stderr'e yazinca
+# PS 5.1 scripti oldururdu. Kritik adimlari asagida acikca 'Die' ile kontrol ediyoruz.
 
-$Bundle   = "https://github.com/bol-van/zapret-win-bundle"
+$Bundle     = "https://github.com/bol-van/zapret-win-bundle"
 $InstallDir = "$env:ProgramFiles\AsenaDPI"
-$Cfg      = "$env:APPDATA\AsenaDPI"
-$RepoDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RepoRoot = Split-Path -Parent $RepoDir
+$Cfg        = "$env:APPDATA\AsenaDPI"
+$RepoDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot   = Split-Path -Parent $RepoDir
 
 function Say($m) { Write-Host ">> $m" -ForegroundColor Cyan }
 function Die($m) { Write-Host "!! $m" -ForegroundColor Red; exit 1 }
+# native komutu calistir, tum ciktiyi (stdout+stderr) yut, exit code don
+function Nat { param([string]$File, [string[]]$Args)
+    & $File @Args 2>&1 | Out-Null
+    return $LASTEXITCODE
+}
 
-# --- 0) git + python var mi ---
+# --- 0) git ---
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     Say "git yok -> winget ile kuruluyor..."
-    winget install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements | Out-Null
+    Nat "winget" @("install","--id","Git.Git","-e","--accept-package-agreements","--accept-source-agreements") | Out-Null
+    $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
 }
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Die "git kurulamadi. Elle kur ve tekrar calistir." }
+
+# --- 0b) python (mutlak yolla bul; PATH'e guvenme) ---
 function Find-Python {
     foreach ($n in @("python", "python3")) {
         $c = Get-Command $n -ErrorAction SilentlyContinue
         if ($c -and $c.Source -and (Test-Path $c.Source) -and $c.Source -notmatch "WindowsApps") { return $c.Source }
     }
     $pl = Get-Command py -ErrorAction SilentlyContinue
-    if ($pl) { $p = (& $pl.Source -c "import sys;print(sys.executable)" 2>$null); if ($p) { return $p.Trim() } }
+    if ($pl) { $p = (& $pl.Source -c "import sys;print(sys.executable)" 2>$null); if ($p) { return "$p".Trim() } }
     foreach ($g in @("$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
                      "$env:ProgramFiles\Python3*\python.exe", "C:\Python3*\python.exe")) {
         $f = Get-ChildItem $g -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -40,39 +50,42 @@ function Find-Python {
 $pyExe = Find-Python
 if (-not $pyExe) {
     Say "Python yok -> winget ile kuruluyor..."
-    winget install --id Python.Python.3.12 -e --accept-package-agreements --accept-source-agreements | Out-Null
+    Nat "winget" @("install","--id","Python.Python.3.12","-e","--accept-package-agreements","--accept-source-agreements") | Out-Null
     $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
     $pyExe = Find-Python
 }
-if (-not $pyExe) { Die "Python bulunamadi. Elle kur (python.org, 'Add python to PATH' isaretli) ve tekrar calistir." }
+if (-not $pyExe) { Die "Python bulunamadi. Elle kur (python.org, 'Add python to PATH') ve tekrar calistir." }
 $pyDir = Split-Path $pyExe
 $pyw = Join-Path $pyDir "pythonw.exe"
-if (-not (Test-Path $pyw)) { $pyw = $pyExe }   # pythonw yoksa python kullan
+if (-not (Test-Path $pyw)) { $pyw = $pyExe }
 Say "Python: $pyExe"
 
+# --- 0c) PySide6 (exit code ile kontrol; traceback scripti oldurmez) ---
 Say "PySide6 kontrol..."
-& $pyExe -c "import PySide6.QtWidgets" 2>$null
-if ($LASTEXITCODE -ne 0) {
+if ((Nat $pyExe @("-c","import PySide6.QtWidgets")) -ne 0) {
     Say "PySide6 kuruluyor (pip)..."
-    & $pyExe -m pip install --upgrade pip | Out-Null
-    & $pyExe -m pip install PySide6 | Out-Null
+    Nat $pyExe @("-m","pip","install","--upgrade","pip") | Out-Null
+    Nat $pyExe @("-m","pip","install","PySide6") | Out-Null
+    if ((Nat $pyExe @("-c","import PySide6.QtWidgets")) -ne 0) {
+        Say "UYARI: PySide6 kurulamadi (tray acilmaz). Elle: `"$pyExe`" -m pip install PySide6"
+    }
 }
 
 # --- 1) zapret-win-bundle indir (winws + WinDivert + blockcheck) ---
 $tmp = "$env:TEMP\zapret-win-bundle"
-if (Test-Path "$tmp\.git") { git -C $tmp pull --ff-only | Out-Null }
-else { Say "zapret-win-bundle indiriliyor..."; git clone --depth 1 $Bundle $tmp | Out-Null }
+if (Test-Path "$tmp\.git") { Say "bundle guncelleniyor..."; Nat "git" @("-C",$tmp,"pull","--ff-only") | Out-Null }
+else { Say "zapret-win-bundle indiriliyor..."; Nat "git" @("clone","--depth","1",$Bundle,$tmp) | Out-Null }
 
-# bundle icinde winws.exe + WinDivert dosyalari (surumden bagimsiz bul)
-$winws = Get-ChildItem -Path $tmp -Recurse -Filter winws.exe | Select-Object -First 1
-if (-not $winws) { Die "winws.exe bulunamadi (bundle yapisi degismis olabilir)." }
+$winws = Get-ChildItem -Path $tmp -Recurse -Filter winws.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $winws) { Die "winws.exe bulunamadi (bundle indirilemedi ya da yapisi degisti): $tmp" }
 $winwsDir = $winws.Directory.FullName
 
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Say "winws + WinDivert -> $InstallDir"
-Copy-Item "$winwsDir\*" $InstallDir -Recurse -Force   # winws.exe + WinDivert64.sys + WinDivert.dll vb.
+Copy-Item "$winwsDir\*" $InstallDir -Recurse -Force
+if (-not (Test-Path "$InstallDir\winws.exe")) { Die "winws.exe kopyalanamadi -> $InstallDir" }
 
-# blockcheck (optimize icin) — bundle'da varsa kopyala
+# blockcheck (optimize icin) — bundle'da varsa
 $bc = Get-ChildItem -Path $tmp -Recurse -Filter "blockcheck.cmd" -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($bc) { Copy-Item $bc.Directory.FullName "$InstallDir\blockcheck" -Recurse -Force }
 
@@ -97,15 +110,19 @@ if (-not (Test-Path "$Cfg\tcp443.conf")) {
 
 # --- 3) tray'i logon'da YONETICI olarak baslatan gorev (UAC'siz) ---
 Say "Autostart gorevi (logon, en yuksek yetki)..."
-# $pyw yukarida bulundu (pythonw.exe ya da python.exe mutlak yolu)
-$act = New-ScheduledTaskAction -Execute $pyw -Argument "`"$InstallDir\asena-dpi-tray.pyw`""
-$trg = New-ScheduledTaskTrigger -AtLogOn
-$prn = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -RunLevel Highest -LogonType Interactive
-$set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName "AsenaDPI-Tray" -Action $act -Trigger $trg -Principal $prn -Settings $set -Force | Out-Null
+try {
+    $act = New-ScheduledTaskAction -Execute $pyw -Argument "`"$InstallDir\asena-dpi-tray.pyw`""
+    $trg = New-ScheduledTaskTrigger -AtLogOn
+    $prn = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -RunLevel Highest -LogonType Interactive
+    $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName "AsenaDPI-Tray" -Action $act -Trigger $trg -Principal $prn -Settings $set -Force -ErrorAction Stop | Out-Null
+} catch {
+    Say "UYARI: autostart gorevi kurulamadi ($($_.Exception.Message)). Tray'i elle baslatabilirsin:"
+    Write-Host "   `"$pyw`" `"$InstallDir\asena-dpi-tray.pyw`"" -ForegroundColor Yellow
+}
 
 Say "KURULUM TAMAM. Tray'i simdi baslat:"
 Write-Host "   schtasks /run /tn AsenaDPI-Tray" -ForegroundColor Yellow
-Write-Host "   (sonraki her acilista otomatik, yonetici olarak, UAC'siz)"
+Write-Host "   (ya da: `"$pyw`" `"$InstallDir\asena-dpi-tray.pyw`")" -ForegroundColor Gray
 Write-Host ""
 Write-Host "   Tray: SOL tik = ayarlar · SAG tik = menu · 'En iyi strateji' = blockcheck" -ForegroundColor Gray

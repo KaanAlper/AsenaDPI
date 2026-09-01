@@ -370,7 +370,7 @@ class AsenaTray:
         self.optwin.run()
 
     def on_act(self, reason):
-        if reason == QSystemTrayIcon.Trigger: self.open_settings()
+        if reason == QSystemTrayIcon.Trigger: self.toggle()   # sol tik = ac/kapat
 
     def toggle(self):
         if is_on(): stop_off()
@@ -381,7 +381,7 @@ class AsenaTray:
         on = is_on()
         self.tray.setIcon(self.icon_on if on else self.icon_off)
         self.act_toggle.setText("Bağlantıyı kes" if on else "Bağlan")
-        self.tray.setToolTip(f"AsenaDPI: {'AÇIK' if on else 'kapalı'}  (sol tık: ayarlar)")
+        self.tray.setToolTip(f"AsenaDPI: {'AÇIK' if on else 'kapalı'}  (sol tık: aç/kapat)")
 
 
 def main():
