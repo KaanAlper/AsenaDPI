@@ -365,14 +365,16 @@ class AppWindow(QWidget):
         self.out.moveCursor(QTextCursor.End)
 
     def _done(self, code, _st):
-        self.bar.setRange(0, 100); self.bar.setValue(100); self._busy = False
+        self._busy = False
         cb = self._on_done; self._on_done = None
         if cb:
             cb(code)
+        else:
+            self.bar.hide(); center_fixed(self)   # islem bitti -> cubugu gizle
         self.refresh()
 
     def set_result(self, msg):
-        self.act.setText(msg); self.bar.setRange(0, 100); self.bar.setValue(100)
+        self.act.setText(msg); self.bar.hide(); center_fixed(self)
 
     def refresh(self):
         on = is_on()

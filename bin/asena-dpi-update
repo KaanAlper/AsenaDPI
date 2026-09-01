@@ -1,31 +1,41 @@
 #!/usr/bin/env bash
-# AsenaDPI güncelle — repo'yu git pull + bin/tray'i yeniden kur. root çalışır (sudoers NOPASSWD).
-#   Kullanim: sudo asena-dpi-update
+# AsenaDPI güncelle — git pull + KURULU dosyalar repo'dakinden farkliysa yeniden kur.
+# 'zaten güncel' karari HEAD'e degil, KURULU dosya repo ile ayni mi ona bakar (dev makinede repo
+# zaten HEAD'te olsa bile kurulu kopya eski olabilir). root çalışır (sudoers NOPASSWD).
 set -e
 
 USER_NAME="${SUDO_USER:-$(id -nu 1000)}"
 USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
-REPO=$(cat "$USER_HOME/.config/asena-dpi/repo_dir" 2>/dev/null || true)
+CFG="$USER_HOME/.config/asena-dpi"
+REPO=$(cat "$CFG/repo_dir" 2>/dev/null || true)
 [ -d "$REPO/.git" ] || { echo "HATA: repo bulunamadi ($REPO). install.sh tekrar calistir." >&2; exit 1; }
 
-GIT() { git -C "$REPO" -c safe.directory="$REPO" "$@"; }
-BEFORE=$(GIT rev-parse HEAD 2>/dev/null || echo x)
-
 echo ">> git pull  ($REPO)"
-sudo -u "$USER_NAME" git -C "$REPO" pull --ff-only 2>&1 || GIT pull --ff-only
+sudo -u "$USER_NAME" git -C "$REPO" pull --ff-only 2>&1 || \
+    git -C "$REPO" -c safe.directory="$REPO" pull --ff-only 2>&1 || true
 
-AFTER=$(GIT rev-parse HEAD 2>/dev/null || echo y)
-if [ "$BEFORE" = "$AFTER" ]; then
-    echo ">> ZATEN GUNCEL (yeni surum yok, yeniden baslatmaya gerek yok)."
-    exit 10   # tray: restart etme, 'zaten guncel' de
+CHANGED=0
+echo ">> kurulu dosyalar repo ile karsilastiriliyor..."
+for f in asena-dpi-on asena-dpi-off asena-dpi-optimize asena-dpi-update asena-dpi-tray; do
+    src="$REPO/bin/$f"; dst="/usr/local/bin/$f"
+    [ -f "$src" ] || continue
+    if ! cmp -s "$src" "$dst"; then CHANGED=1; install -m755 "$src" "$dst"; echo "   guncellendi: $f"; fi
+done
+# dispatcher
+if [ -d /etc/NetworkManager/dispatcher.d ] && [ -f "$REPO/dispatcher/90-asena-dpi" ]; then
+    if ! cmp -s "$REPO/dispatcher/90-asena-dpi" /etc/NetworkManager/dispatcher.d/90-asena-dpi; then
+        CHANGED=1; install -m755 "$REPO/dispatcher/90-asena-dpi" /etc/NetworkManager/dispatcher.d/90-asena-dpi
+    fi
+fi
+# ikon (kullanici config'i; degisirse tray restart'ta yeni ikonu alir)
+if [ -f "$REPO/config/asena-dpi.png" ] && ! cmp -s "$REPO/config/asena-dpi.png" "$CFG/asena-dpi.png"; then
+    CHANGED=1; cp -f "$REPO/config/asena-dpi.png" "$CFG/asena-dpi.png"
+    chown "$USER_NAME:$(id -gn "$USER_NAME")" "$CFG/asena-dpi.png" 2>/dev/null || true
 fi
 
-echo ">> scriptler + tray yeniden kuruluyor"
-for f in asena-dpi-on asena-dpi-off asena-dpi-optimize asena-dpi-update asena-dpi-tray; do
-    [ -f "$REPO/bin/$f" ] && install -m755 "$REPO/bin/$f" "/usr/local/bin/$f"
-done
-# dispatcher da guncellensin
-[ -d /etc/NetworkManager/dispatcher.d ] && [ -f "$REPO/dispatcher/90-asena-dpi" ] && \
-    install -m755 "$REPO/dispatcher/90-asena-dpi" /etc/NetworkManager/dispatcher.d/90-asena-dpi
-
-echo ">> GUNCELLENDI ($(git -C "$REPO" rev-parse --short HEAD)). Tray yeniden baslatilacak."
+if [ "$CHANGED" = 0 ]; then
+    echo ">> ZATEN GUNCEL (kurulu surum repo ile ayni)."
+    exit 10   # tray: 'zaten guncel' de, restart etme
+fi
+echo ">> GUNCELLENDI. Tray yeniden baslatilacak."
+exit 0

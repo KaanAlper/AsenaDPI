@@ -499,15 +499,16 @@ class AppWindow(QWidget):
         self.out.moveCursor(QTextCursor.End)
 
     def _done(self, code, _st):
-        self.bar.setRange(0, 100); self.bar.setValue(100)
         self._busy = False
         cb = self._on_done; self._on_done = None
         if cb:
             cb(code)
+        else:
+            self.bar.hide(); self.adjustSize()   # islem bitti -> cubugu gizle
         self.refresh()
 
     def set_result(self, msg):
-        self.act.setText(msg); self.bar.setRange(0, 100); self.bar.setValue(100)
+        self.act.setText(msg); self.bar.hide(); self.adjustSize()
 
     # ---------- guc / durum ----------
     def refresh(self):
@@ -637,21 +638,25 @@ class AppWindow(QWidget):
             self.set_result("Guncelleme kaynagi bulunamadi. install.ps1'i bir kez daha calistir.")
             return
 
-        def head():
-            r = run_hidden(["git", "-C", repo, "rev-parse", "HEAD"])
-            return (r.stdout or "").strip()
-        before = head()
-
         def done(code):
             if code != 0:
                 self.set_result("Guncelleme basarisiz (GitHub'a ulasilamadi mi?). Detaylara bak.")
                 return
-            if head() == before:
+            # 'zaten guncel' karari git HEAD'e degil, KURULU dosya repo ile ayni mi ona bakar
+            # (dev makinede repo zaten HEAD'te olsa bile kurulu kopya eski olabilir).
+            import filecmp
+            src = os.path.join(repo, "windows", "asena-dpi-tray.pyw")
+            dst = str(INSTALL_DIR / "asena-dpi-tray.pyw")
+            same = os.path.exists(dst) and filecmp.cmp(src, dst, shallow=False)
+            if same:
                 self.set_result("Zaten guncel - yeni surum yok.")   # degisiklik yok -> restart YOK
                 return
             try:
-                shutil.copy2(os.path.join(repo, "windows", "asena-dpi-tray.pyw"),
-                             str(INSTALL_DIR / "asena-dpi-tray.pyw"))
+                shutil.copy2(src, dst)
+                # ikon da guncellensin (Guncelle ile yeni logo gelsin)
+                ico_src = os.path.join(repo, "windows", "asena-dpi.ico")
+                if os.path.exists(ico_src):
+                    shutil.copy2(ico_src, str(INSTALL_DIR / "asena-dpi.ico"))
                 self.set_result("Guncellendi. Uygulama yeniden baslatiliyor...")
                 QTimer.singleShot(1400, self.tray._restart)
             except Exception as e:
