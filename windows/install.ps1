@@ -22,6 +22,14 @@ function Nat { param([string]$File, [string[]]$Args)
     & $File @Args 2>&1 | Out-Null
     return $LASTEXITCODE
 }
+function Stop-AsenaDPI {
+    # calisan tray (pythonw asena-dpi-tray) + winws'i durdur -> WinDivert64.sys kilidi kalmasin
+    Get-CimInstance Win32_Process -Filter "Name='pythonw.exe' OR Name='python.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine -like "*asena-dpi-tray*" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Get-Process winws -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 900
+}
 
 # --- 0) git ---
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
@@ -76,6 +84,7 @@ else { Say "zapret-win-bundle indiriliyor (~60 MB)..."; Nat "git" @("clone","--d
 
 if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) { Die "winws.exe yok ($tmp\zapret-winws). Bundle indirilemedi mi?" }
 
+Stop-AsenaDPI   # kopyalamadan ONCE winws+tray durdur (yoksa WinDivert64.sys kilitli -> kopya hatasi)
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Say "Bundle kopyalaniyor -> $InstallDir (zapret-winws + blockcheck + cygwin + tools)..."
 Get-ChildItem -Path $tmp -Force | Where-Object { $_.Name -ne ".git" -and $_.Name -ne ".github" } |
@@ -142,8 +151,7 @@ try {
 
 # --- 4) tray'i SIMDI baslat (sonraki acilista gorev zaten baslatir) ---
 Say "Tray baslatiliyor..."
-# calisan eski tray varsa kapat
-Nat "taskkill" @("/f","/im","pythonw.exe","/fi","WINDOWTITLE eq AsenaDPI*") | Out-Null
+Stop-AsenaDPI   # eski tray kalmadigindan emin ol (cift tray olmasin)
 if ((Nat "schtasks" @("/run","/tn","AsenaDPI-Tray")) -ne 0) {
     Start-Process $pyw -ArgumentList "`"$InstallDir\asena-dpi-tray.pyw`""   # gorev yoksa dogrudan
 }

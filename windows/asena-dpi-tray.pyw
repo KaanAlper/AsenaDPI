@@ -602,4 +602,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        try:
+            CFG.mkdir(parents=True, exist_ok=True)
+            (CFG / "tray-error.log").write_text(traceback.format_exc(), encoding="utf-8")
+        except Exception:
+            pass
+        raise
