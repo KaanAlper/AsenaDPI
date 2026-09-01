@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
     QLabel, QRadioButton, QCheckBox, QPushButton, QButtonGroup, QFrame, QPlainTextEdit,
     QProgressBar, QTabWidget, QLineEdit,
 )
-from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont, QTextCursor
-from PySide6.QtCore import QTimer, Qt, QPointF, QProcess
+from PySide6.QtGui import QIcon, QAction, QPainter, QColor, QBrush, QPen, QPixmap, QPainterPath, QFont, QTextCursor, QImage
+from PySide6.QtCore import QTimer, Qt, QPointF, QProcess, QRect
 
 INSTALL_DIR = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "AsenaDPI"
 WINWS_DIR = INSTALL_DIR / "zapret-winws"
@@ -262,23 +262,42 @@ def app_qicon() -> QIcon:
 
 
 def dim_icon(icon: QIcon) -> QIcon:
-    """Kapali durum icin ikonu soluklastir (renkli kurt+DPI -> silik)."""
+    """Kapali durum icon'u: GRI (tam opak) -> gorev cubugunda gorunur kalir, acik-renkli
+    halden ayirt edilir (saydamlik gostermez, hayalet olmaz)."""
     try:
         pm = icon.pixmap(64, 64)
-        out = QPixmap(pm.size()); out.fill(Qt.transparent)
-        p = QPainter(out); p.setOpacity(0.35); p.drawPixmap(0, 0, pm); p.end()
-        return QIcon(out)
+        img = pm.toImage().convertToFormat(QImage.Format_ARGB32)
+        for y in range(img.height()):
+            for x in range(img.width()):
+                c = img.pixelColor(x, y)
+                if c.alpha() == 0:
+                    continue
+                g = int(0.30 * c.red() + 0.59 * c.green() + 0.11 * c.blue())
+                c.setRgb(g, g, g, c.alpha())
+                img.setPixelColor(x, y, c)
+        return QIcon(QPixmap.fromImage(img))
     except Exception:
         return icon
 
 
+def tray_mark(on: bool) -> QIcon:
+    """Tray icon'u: keskin, OKUNAKLI 'DPI' karo (16px'te bile ayirt edilir). Kurt+DPI logosu
+    detayli oldugundan kucukte bulaniklasiyor; tepside bunun yerine sade karo. Acik=teal, kapali=gri."""
+    pm = QPixmap(64, 64); pm.fill(Qt.transparent)
+    p = QPainter(pm); p.setRenderHint(QPainter.Antialiasing)
+    bg = QColor(38, 166, 154) if on else QColor(96, 102, 110)
+    p.setPen(QPen(QColor(255, 255, 255), 3)); p.setBrush(QBrush(bg))
+    p.drawRoundedRect(3, 8, 58, 48, 12, 12)              # beyaz kenarli karo (koyu taskbar'da belirgin)
+    f = QFont("Arial", 1); f.setBold(True); f.setPixelSize(30)
+    p.setFont(f); p.setPen(QColor(255, 255, 255))
+    p.drawText(QRect(0, 8, 64, 48), Qt.AlignCenter, "DPI")
+    p.end()
+    return QIcon(pm)
+
+
 def tray_icons():
-    """(on, off) tray ikonlari: kurt+DPI (.ico) varsa onu kullan, yoksa cizili kalkan."""
-    if ICO_PATH.exists():
-        base = app_qicon()
-        if not base.isNull():
-            return base, dim_icon(base)
-    return make_icon(True), make_icon(False)
+    """(on, off) tray ikonlari: okunakli DPI karo."""
+    return tray_mark(True), tray_mark(False)
 
 
 def _sec(t):
