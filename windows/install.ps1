@@ -61,17 +61,11 @@ if (-not (Test-Path $pyw)) { $pyw = $pyExe }
 Say "Python: $pyExe"
 
 # --- 0c) PySide6 (exit code ile kontrol; traceback scripti oldurmez) ---
-# PySide6 KURULU MU? find_spec ile bak -> Qt DLL'i YUKLEMEZ (Defender taramasi/donma yok, aninda)
-$pyChk = "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('PySide6') else 1)"
-Say "PySide6 kontrol..."
-if ((Nat $pyExe @("-c",$pyChk)) -ne 0) {
-    Say "PySide6 indiriliyor (~250 MB - baglantiya gore birkac dakika, ILERLEME asagida)..."
-    & $pyExe -m pip install --upgrade pip
-    & $pyExe -m pip install PySide6      # ciktiyi GOSTER (kara kutu olmasin)
-    if ((Nat $pyExe @("-c",$pyChk)) -ne 0) {
-        Say "UYARI: PySide6 kurulamadi (tray acilmaz). Elle: `"$pyExe`" -m pip install PySide6"
-    }
-} else { Say "PySide6 zaten kurulu." }
+# PySide6 — import KONTROLU YOK (Qt DLL yuklemesi Defender ile dakikalarca asili kalabiliyordu).
+# Dogrudan pip: kuruluysa "already satisfied" deyip ~2sn'de gecer, degilse kurar. Qt yuklenmez.
+Say "PySide6 (pip - kuruluysa aninda gecer, degilse ~250 MB indirir)..."
+& $pyExe -m pip install --upgrade pip
+& $pyExe -m pip install PySide6
 
 # --- 1) zapret-win-bundle indir (winws + WinDivert + blockcheck) ---
 $tmp = "$env:TEMP\zapret-win-bundle"
