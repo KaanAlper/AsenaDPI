@@ -160,6 +160,21 @@ Say "Bundle kopyalaniyor -> $InstallDir (zapret-winws + blockcheck + cygwin + to
 Get-ChildItem -Path $tmp -Force | Where-Object { $_.Name -ne ".git" -and $_.Name -ne ".github" } |
     ForEach-Object { Copy-Item $_.FullName $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
 if (-not (Test-Path "$InstallDir\zapret-winws\winws.exe")) { Die "Kopyalama basarisiz -> $InstallDir\zapret-winws" }
+# blockcheck ('En iyi ayar') prerequisites: winws.exe + mdig.exe SART. Eksik kopyalanmissa
+# (kismi kopya) blockcheck saniyelerde cikip yanlis 'DNS yeter' der -> eksik dosyalari tekrar kopyala.
+ForEach ($need in @("blockcheck\zapret\nfq\winws.exe", "blockcheck\zapret\mdig\mdig.exe", "blockcheck\zapret\ip2net\ip2net.exe")) {
+    $dst = Join-Path $InstallDir $need
+    if (-not (Test-Path $dst)) {
+        $srcf = Join-Path $tmp $need
+        if (Test-Path $srcf) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+            Copy-Item $srcf $dst -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+if (-not (Test-Path "$InstallDir\blockcheck\zapret\mdig\mdig.exe")) {
+    Say "UYARI: mdig.exe kopyalanamadi -> 'En iyi ayar' (blockcheck) calismayabilir. install.ps1'i tekrar calistir."
+}
 
 # --- 2) tray + config + ikon ---
 Say "Tray -> $InstallDir"
