@@ -380,7 +380,8 @@ class AppWindow(QWidget):
         hb.addStretch(1)
         self.status = QLabel(); self.status.setStyleSheet("font-weight:bold;")
         self.btn_power = QPushButton("Baglan"); self.btn_power.clicked.connect(self.toggle_power)
-        hb.addWidget(self.status); hb.addWidget(self.btn_power)
+        btn_x = QPushButton("✕"); btn_x.setFixedWidth(34); btn_x.setToolTip("Kapat (Esc)"); btn_x.clicked.connect(self.close)
+        hb.addWidget(self.status); hb.addWidget(self.btn_power); hb.addWidget(btn_x)
         root.addLayout(hb)
 
         # --- sekmeler ---
@@ -664,6 +665,12 @@ class AppWindow(QWidget):
         self.cb_autoconn.setEnabled(self.cb_autostart.isChecked())
         self.refresh(); self.tabs.setCurrentIndex(tab)
         self.show(); self.raise_(); self.activateWindow()
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(e)
 
     def closeEvent(self, e):
         if self.proc and self.proc.state() != QProcess.NotRunning:
