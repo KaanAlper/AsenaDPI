@@ -89,14 +89,14 @@ fi
 
 # --- 3) scriptler + tray ---
 say "Scriptler kuruluyor -> $BINDIR"
-for f in asena-dpi-on asena-dpi-off asena-dpi-optimize asena-dpi-tray; do
+for f in asena-dpi-on asena-dpi-off asena-dpi-optimize asena-dpi-update asena-dpi-tray; do
   $SUDO install -m755 "$REPO_DIR/bin/$f" "$BINDIR/$f"
 done
 
 # --- 4) sudoers (parolasiz on/off/optimize) — yalniz normal kullanicida ---
 if [ "$USER_NAME" != root ]; then
   say "sudoers (parolasiz kontrol) ..."
-  echo "$USER_NAME ALL=(root) NOPASSWD: $BINDIR/asena-dpi-on, $BINDIR/asena-dpi-off, $BINDIR/asena-dpi-optimize" \
+  echo "$USER_NAME ALL=(root) NOPASSWD: $BINDIR/asena-dpi-on, $BINDIR/asena-dpi-off, $BINDIR/asena-dpi-optimize, $BINDIR/asena-dpi-update" \
     | $SUDO tee /etc/sudoers.d/asena-dpi >/dev/null
   $SUDO chmod 440 /etc/sudoers.d/asena-dpi
 fi
@@ -112,6 +112,7 @@ fi
 # --- 6) kullanici config ---
 say "Ayar/blacklist -> $CFG"
 mkdir -p "$CFG"
+echo "$REPO_DIR" > "$CFG/repo_dir"   # 'Güncelle' bunu kullanır (git pull)
 [ -f "$CFG/blacklist.txt" ] || cp "$REPO_DIR/config/blacklist.txt" "$CFG/blacklist.txt"
 [ -f "$CFG/settings.conf" ] || cat > "$CFG/settings.conf" <<EOF
 # AsenaDPI ayarlari (tray yazar)

@@ -4,7 +4,7 @@ AsenaDPI — Windows tray (winws/WinDivert + DoH DNS + blockcheck).
 Logon'da YONETICI olarak baslar (scheduled task, highest) -> winws + DNS'i dogrudan yonetir,
 her ac/kapada UAC sormaz. SOL tik = ayarlar, SAG tik = menu.
 """
-import os, sys, subprocess
+import os, sys, subprocess, shutil, threading, time
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -23,6 +23,8 @@ CLEAN = CFG / "hostlist_clean.txt"
 SETTINGS = CFG / "settings.conf"
 STRAT_FILE = CFG / "tcp443.conf"
 LOG = CFG / "winws.log"
+REPO_FILE = CFG / "repo_dir"
+LAST_UPDATE_CHECK = CFG / "last_update_check"
 NO_WINDOW = 0x08000000  # CREATE_NO_WINDOW — konsol penceresi acmasin
 
 DEFAULTS = {"MODE": "blacklist", "HTTP": "1", "HTTP2": "1", "HTTP3": "bypass"}
@@ -197,7 +199,7 @@ def section(t):
 class OptimizeWindow(QWidget):
     def __init__(self, tray):
         super().__init__()
-        self.tray = tray; self.proc = None
+        self.tray = tray; self.proc = None; self._on_done = None
         self.setWindowTitle("AsenaDPI — En iyi strateji (blockcheck)")
         self.resize(600, 400); self.setWindowIcon(make_icon(True))
         self.setStyleSheet("QWidget{background:#1b1f27;color:#e6e9ee;font-size:12px;}"
@@ -226,9 +228,21 @@ class OptimizeWindow(QWidget):
         self.proc = QProcess(self); self.proc.setProcessChannelMode(QProcess.MergedChannels)
         self.proc.setWorkingDirectory(str(BLOCKCHECK.parent))
         self.proc.readyRead.connect(self._read); self.proc.finished.connect(self._done)
-        # blockcheck'i Discord domainleri + non-interaktif env ile calistir
-        env = self.proc.processEnvironment()
+        self._on_done = None
         self.proc.start("cmd", ["/c", str(BLOCKCHECK)])
+
+    def run_cmd(self, program, args, workdir, title, on_done):
+        """Genel: herhangi bir komutu canli konsolla calistir (guncelleme icin)."""
+        if self.proc and self.proc.state() != QProcess.NotRunning:
+            self.show(); self.raise_(); return
+        self._on_done = on_done
+        self.out.clear(); self.btn_stop.setEnabled(True); self.status.setText(title)
+        self.show(); self.raise_(); self.activateWindow()
+        self.proc = QProcess(self); self.proc.setProcessChannelMode(QProcess.MergedChannels)
+        if workdir:
+            self.proc.setWorkingDirectory(workdir)
+        self.proc.readyRead.connect(self._read); self.proc.finished.connect(self._done)
+        self.proc.start(program, args)
 
     def _read(self):
         self.out.moveCursor(QTextCursor.End)
@@ -237,6 +251,8 @@ class OptimizeWindow(QWidget):
 
     def _done(self, code, _st):
         self.btn_stop.setEnabled(False)
+        if self._on_done:
+            cb = self._on_done; self._on_done = None; cb(code); self.tray.refresh(); return
         self.status.setText(f"Bitti (kod {code}). Çalışan stratejiyi tcp443.conf'a elle yazabilirsin.")
         self.tray.refresh()
 
@@ -356,10 +372,12 @@ class AsenaTray:
         self.menu.addSeparator()
         a_bl = QAction("Blacklist düzenle…", self.menu); a_bl.triggered.connect(lambda: os.startfile(str(BLACKLIST))); self.menu.addAction(a_bl)
         a_log = QAction("Logu göster", self.menu); a_log.triggered.connect(lambda: os.startfile(str(LOG)) if LOG.exists() else None); self.menu.addAction(a_log)
+        a_upd = QAction("Güncelle (GitHub)", self.menu); a_upd.triggered.connect(self.update); self.menu.addAction(a_upd)
         self.menu.addSeparator()
         a_q = QAction("Çıkış", self.menu); a_q.triggered.connect(app.quit); self.menu.addAction(a_q)
         self.tray.setContextMenu(self.menu); self.tray.activated.connect(self.on_act); self.tray.show()
         self.t = QTimer(); self.t.timeout.connect(self.refresh); self.t.start(3000); self.refresh()
+        QTimer.singleShot(8000, self._autocheck)
 
     def open_settings(self):
         if self.win is None: self.win = SettingsWindow(self)
@@ -368,6 +386,66 @@ class AsenaTray:
     def optimize(self):
         if self.optwin is None: self.optwin = OptimizeWindow(self)
         self.optwin.run()
+
+    def _repo(self):
+        try:
+            r = REPO_FILE.read_text(encoding="utf-8-sig").strip()
+            return r if r and os.path.isdir(os.path.join(r, ".git")) else None
+        except OSError:
+            return None
+
+    def update(self):
+        repo = self._repo()
+        if not repo:
+            return
+        if self.optwin is None: self.optwin = OptimizeWindow(self)
+
+        def done(code):
+            if code != 0:
+                self.optwin.status.setText(f"git pull başarısız (kod {code}).")
+                return
+            try:
+                # yeni tray'i (ve varsa config örneklerini) Program Files'a kopyala
+                shutil.copy2(os.path.join(repo, "windows", "asena-dpi-tray.pyw"),
+                             str(INSTALL_DIR / "asena-dpi-tray.pyw"))
+                self.optwin.status.setText("✅ Güncellendi. Tray yeniden başlatılıyor…")
+                QTimer.singleShot(1400, self._restart)
+            except Exception as e:
+                self.optwin.status.setText(f"Kopyalama hatası: {e}")
+        self.optwin.run_cmd("git", ["-C", repo, "pull", "--ff-only"], repo,
+                            "Güncelleniyor (git pull)…", done)
+
+    def _restart(self):
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception:
+            self.app.quit()
+
+    def _autocheck(self):
+        threading.Thread(target=self._do_autocheck, daemon=True).start()
+
+    def _do_autocheck(self):
+        try:
+            repo = self._repo()
+            if not repo:
+                return
+            try:
+                if time.time() - float(LAST_UPDATE_CHECK.read_text(encoding="utf-8")) < 21600:
+                    return
+            except (OSError, ValueError):
+                pass
+            run_hidden(["git", "-C", repo, "fetch", "--quiet"])
+            r = run_hidden(["git", "-C", repo, "rev-list", "--count", "HEAD..@{u}"])
+            try:
+                LAST_UPDATE_CHECK.write_text(str(time.time()), encoding="utf-8")
+            except OSError:
+                pass
+            n = (r.stdout or "0").strip()
+            if n.isdigit() and int(n) > 0:
+                subprocess.Popen(["msg", "*", f"AsenaDPI: {n} yeni sürüm var — sağ tık > Güncelle"],
+                                 creationflags=NO_WINDOW)
+        except Exception:
+            pass
 
     def on_act(self, reason):
         if reason == QSystemTrayIcon.Trigger: self.toggle()   # sol tik = ac/kapat

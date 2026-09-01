@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# AsenaDPI güncelle — repo'yu git pull + bin/tray'i yeniden kur. root çalışır (sudoers NOPASSWD).
+#   Kullanim: sudo asena-dpi-update
+set -e
+
+USER_NAME="${SUDO_USER:-$(id -nu 1000)}"
+USER_HOME=$(getent passwd "$USER_NAME" | cut -d: -f6)
+REPO=$(cat "$USER_HOME/.config/asena-dpi/repo_dir" 2>/dev/null || true)
+[ -d "$REPO/.git" ] || { echo "HATA: repo bulunamadi ($REPO). install.sh tekrar calistir." >&2; exit 1; }
+
+echo ">> git pull  ($REPO)"
+# repo kullaniciya ait, biz root'uz -> safe.directory
+sudo -u "$USER_NAME" git -C "$REPO" pull --ff-only 2>&1 || git -C "$REPO" -c safe.directory="$REPO" pull --ff-only
+
+echo ">> scriptler + tray yeniden kuruluyor"
+for f in asena-dpi-on asena-dpi-off asena-dpi-optimize asena-dpi-update asena-dpi-tray; do
+    [ -f "$REPO/bin/$f" ] && install -m755 "$REPO/bin/$f" "/usr/local/bin/$f"
+done
+# dispatcher da guncellensin
+[ -d /etc/NetworkManager/dispatcher.d ] && [ -f "$REPO/dispatcher/90-asena-dpi" ] && \
+    install -m755 "$REPO/dispatcher/90-asena-dpi" /etc/NetworkManager/dispatcher.d/90-asena-dpi
+
+echo ">> GUNCELLENDI ($(git -C "$REPO" rev-parse --short HEAD)). Tray yeniden baslatilacak."

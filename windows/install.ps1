@@ -63,9 +63,9 @@ Say "Python: $pyExe"
 # --- 0c) PySide6 (exit code ile kontrol; traceback scripti oldurmez) ---
 Say "PySide6 kontrol..."
 if ((Nat $pyExe @("-c","import PySide6.QtWidgets")) -ne 0) {
-    Say "PySide6 kuruluyor (pip)..."
-    Nat $pyExe @("-m","pip","install","--upgrade","pip") | Out-Null
-    Nat $pyExe @("-m","pip","install","PySide6") | Out-Null
+    Say "PySide6 indiriliyor (~250 MB — baglantiya gore birkac dakika, ILERLEME asagida)..."
+    & $pyExe -m pip install --upgrade pip
+    & $pyExe -m pip install PySide6      # ciktiyi GOSTER (kara kutu olmasin)
     if ((Nat $pyExe @("-c","import PySide6.QtWidgets")) -ne 0) {
         Say "UYARI: PySide6 kurulamadi (tray acilmaz). Elle: `"$pyExe`" -m pip install PySide6"
     }
@@ -94,6 +94,7 @@ Say "Tray -> $InstallDir"
 Copy-Item "$RepoDir\asena-dpi-tray.pyw" "$InstallDir\asena-dpi-tray.pyw" -Force
 
 New-Item -ItemType Directory -Force -Path $Cfg | Out-Null
+Set-Content "$Cfg\repo_dir" -Value $RepoRoot -Encoding ascii   # 'Güncelle' bunu kullanır (git pull)
 if (-not (Test-Path "$Cfg\blacklist.txt")) { Copy-Item "$RepoRoot\config\blacklist.txt" "$Cfg\blacklist.txt" -Force }
 if (-not (Test-Path "$Cfg\settings.conf")) {
 @"

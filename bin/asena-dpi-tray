@@ -7,8 +7,11 @@ AsenaDPI — system tray + ayar penceresi.
 - Mod (Blacklist/Full), HTTP/3 (Bypass/Kapali/Engelle), Gelismis (HTTP/HTTP2),
   "Degisecekler" onizleme, Uygula. nfqws desync + DoT + fail-safe.
 """
+import os
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -21,8 +24,11 @@ from PySide6.QtCore import QTimer, Qt, QPointF, QProcess
 ON = ["sudo", "-n", "/usr/local/bin/asena-dpi-on"]
 OFF = ["sudo", "-n", "/usr/local/bin/asena-dpi-off"]
 OPTIMIZE = ["sudo", "-n", "/usr/local/bin/asena-dpi-optimize"]
+UPDATE = ["sudo", "-n", "/usr/local/bin/asena-dpi-update"]
 LOG = "/var/log/asena-dpi.log"
 CFG = Path.home() / ".config" / "asena-dpi"
+REPO_FILE = CFG / "repo_dir"
+LAST_UPDATE_CHECK = CFG / "last_update_check"
 BLACKLIST = str(CFG / "blacklist.txt")
 SETTINGS = CFG / "settings.conf"
 
@@ -253,6 +259,7 @@ class OptimizeWindow(QWidget):
         super().__init__()
         self.tray = tray
         self.proc = None
+        self._on_done = None
         self.setWindowTitle("AsenaDPI — En iyi strateji (blockcheck)")
         self.resize(600, 400)
         self.setWindowIcon(make_icon(True))
@@ -276,18 +283,23 @@ class OptimizeWindow(QWidget):
         h.addWidget(self.btn_stop); h.addWidget(self.btn_close)
         v.addLayout(h)
 
-    def run(self):
+    def run(self, cmd=None, title="blockcheck çalışıyor… (birkaç dakika · pencereyi açık tutabilirsin)",
+            on_done=None, window_title="AsenaDPI — En iyi strateji (blockcheck)"):
+        if cmd is None:
+            cmd = OPTIMIZE
         if self.proc and self.proc.state() != QProcess.NotRunning:
             self.show(); self.raise_(); self.activateWindow(); return
+        self._on_done = on_done
+        self.setWindowTitle(window_title)
         self.out.clear()
-        self.status.setText("blockcheck çalışıyor… (birkaç dakika · pencereyi açık tutabilirsin)")
+        self.status.setText(title)
         self.btn_stop.setEnabled(True)
         self.show(); self.raise_(); self.activateWindow()
         self.proc = QProcess(self)
         self.proc.setProcessChannelMode(QProcess.MergedChannels)
         self.proc.readyRead.connect(self._read)
         self.proc.finished.connect(self._done)
-        self.proc.start(OPTIMIZE[0], OPTIMIZE[1:])
+        self.proc.start(cmd[0], cmd[1:])
 
     def _read(self):
         data = bytes(self.proc.readAll()).decode("utf-8", "replace")
@@ -297,6 +309,9 @@ class OptimizeWindow(QWidget):
 
     def _done(self, code, _st):
         self.btn_stop.setEnabled(False)
+        if self._on_done:
+            cb = self._on_done; self._on_done = None
+            cb(code); self.tray.refresh(); return
         if code == 0:
             self.status.setText("✅ En iyi strateji bulundu ve uygulandı.")
         elif code == 2:
@@ -338,6 +353,8 @@ class AsenaTray:
         self.menu.addAction(a_log)
         a_fix = QAction("DNS'i onar", self.menu); a_fix.triggered.connect(self.repair)
         self.menu.addAction(a_fix)
+        self.act_update = QAction("Güncelle (GitHub)", self.menu); self.act_update.triggered.connect(self.update)
+        self.menu.addAction(self.act_update)
         self.menu.addSeparator()
         a_q = QAction("Çıkış", self.menu); a_q.triggered.connect(app.quit)
         self.menu.addAction(a_q)
@@ -346,6 +363,7 @@ class AsenaTray:
         self.tray.show()
         self.t = QTimer(); self.t.timeout.connect(self.refresh); self.t.start(3000)
         self.refresh()
+        QTimer.singleShot(8000, self._autocheck)   # acilistan sonra sessiz guncelleme denetimi
 
     def open_settings(self):
         if self.win is None:
@@ -372,6 +390,51 @@ class AsenaTray:
     def repair(self):
         subprocess.run(ON, capture_output=True, timeout=25)
         QTimer.singleShot(500, self.refresh)
+
+    def update(self):
+        if self.optwin is None:
+            self.optwin = OptimizeWindow(self)
+
+        def done(code):
+            if code == 0:
+                self.optwin.status.setText("✅ Güncellendi. Tray yeniden başlatılıyor…")
+                QTimer.singleShot(1400, self._restart)
+            else:
+                self.optwin.status.setText(f"Güncelleme başarısız (çıkış kodu {code}). Log'a bak.")
+        self.optwin.run(UPDATE, "Güncelleniyor (git pull + yeniden kur)…", done, "AsenaDPI — Güncelle")
+
+    def _restart(self):
+        # tray'i yeni koddan yeniden calistir
+        try:
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception:
+            self.app.quit()
+
+    def _autocheck(self):
+        threading.Thread(target=self._do_autocheck, daemon=True).start()
+
+    def _do_autocheck(self):
+        try:
+            repo = REPO_FILE.read_text(encoding="utf-8").strip()
+            if not repo or not os.path.isdir(os.path.join(repo, ".git")):
+                return
+            try:
+                if time.time() - float(LAST_UPDATE_CHECK.read_text(encoding="utf-8")) < 21600:
+                    return   # 6 saatte bir
+            except (OSError, ValueError):
+                pass
+            subprocess.run(["git", "-C", repo, "fetch", "--quiet"], capture_output=True, timeout=30)
+            r = subprocess.run(["git", "-C", repo, "rev-list", "--count", "HEAD..@{u}"],
+                               capture_output=True, text=True, timeout=10)
+            try:
+                LAST_UPDATE_CHECK.write_text(str(time.time()), encoding="utf-8")
+            except OSError:
+                pass
+            n = (r.stdout or "0").strip()
+            if n.isdigit() and int(n) > 0:
+                notify("AsenaDPI güncelleme", f"{n} yeni sürüm — sağ tık → Güncelle")
+        except Exception:
+            pass
 
     def refresh(self):
         on = is_on()
