@@ -33,13 +33,55 @@ function Stop-AsenaDPI {
     Start-Sleep -Milliseconds 1500
 }
 
-# --- 0) git ---
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Say "git yok -> winget ile kuruluyor..."
-    Nat "winget" @("install","--id","Git.Git","-e","--accept-package-agreements","--accept-source-agreements") | Out-Null
-    $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+# Guvenli indirme yardimcisi: TLS 1.2/1.3 zorlar, sirasiyla curl.exe, WebClient ve Invoke-WebRequest dener
+function Download-File {
+    param([string]$Url, [string]$Dest)
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]'Tls12,Tls13'
+    # 1. curl.exe (Windows 10 1803+ yerleşik gelir)
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        & curl.exe -f -sSL -o $Dest $Url 2>&1 | Out-Null
+        if ((Test-Path $Dest) -and (Get-Item $Dest).Length -gt 1000) { return $true }
+    }
+    # 2. WebClient (.NET)
+    try {
+        $wc = New-Object System.Net.WebClient
+        $wc.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        $wc.DownloadFile($Url, $Dest)
+        if ((Test-Path $Dest) -and (Get-Item $Dest).Length -gt 1000) { return $true }
+    } catch {}
+    # 3. Invoke-WebRequest (PowerShell)
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $Dest -UseBasicParsing -TimeoutSec 90 -ErrorAction Stop
+        if ((Test-Path $Dest) -and (Get-Item $Dest).Length -gt 1000) { return $true }
+    } catch {}
+    return $false
 }
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Die "git kurulamadi. Elle kur ve tekrar calistir." }
+
+function Refresh-EnvPath {
+    $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+    foreach ($d in @(
+        "$env:ProgramFiles\Python312",
+        "$env:ProgramFiles\Python312\Scripts",
+        "$env:ProgramFiles\Python311",
+        "$env:ProgramFiles\Python311\Scripts",
+        "$env:ProgramFiles\Git\cmd",
+        "$env:LOCALAPPDATA\Programs\Python\Python312",
+        "$env:LOCALAPPDATA\Programs\Python\Python312\Scripts"
+    )) {
+        if ((Test-Path $d) -and ($env:Path -notlike "*$d*")) {
+            $env:Path = "$d;$env:Path"
+        }
+    }
+}
+
+# --- 0) git (varsa kullanilir, yoksa winget ile denenir; bulunamazsa ZIP ile devam edilir) ---
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Say "git yok -> winget ile sessiz kuruluyor..."
+        Nat "winget" @("install","--id","Git.Git","-e","--silent","--accept-package-agreements","--accept-source-agreements") | Out-Null
+        Refresh-EnvPath
+    }
+}
 
 # --- 0b) python (mutlak yolla bul + GERCEKTEN calistigini dogrula) ---
 # Store'un 0-byte stub'i ('WindowsApps\python.exe') "gecerli bir uygulama degil" hatasi verir;
@@ -55,30 +97,93 @@ function Test-Py {
         return ($LASTEXITCODE -eq 0)
     } catch { return $false }
 }
+
 function Find-Python {
     $cands = @()
+    # 1. Oncelikle gercek kurulu dizinlere bak (Store'un WindowsApps sahte stub'larina takilmasin)
+    foreach ($g in @(
+        "$env:ProgramFiles\Python3*\python.exe",
+        "${env:ProgramFiles(x86)}\Python3*\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
+        "C:\Python3*\python.exe",
+        "C:\Program Files\Python3*\python.exe"
+    )) {
+        Get-ChildItem $g -ErrorAction SilentlyContinue | ForEach-Object { $cands += $_.FullName }
+    }
+    # 2. py launcher
+    $pl = Get-Command py -ErrorAction SilentlyContinue
+    if ($pl) {
+        $p = (& $pl.Source -c "import sys;print(sys.executable)" 2>$null)
+        if ($p) { $cands += "$p".Trim() }
+    }
+    # 3. PATH uzerindeki python
     foreach ($n in @("python", "python3")) {
         $c = Get-Command $n -ErrorAction SilentlyContinue
         if ($c -and $c.Source -and $c.Source -notmatch "WindowsApps") { $cands += $c.Source }
     }
-    $pl = Get-Command py -ErrorAction SilentlyContinue
-    if ($pl) { $p = (& $pl.Source -c "import sys;print(sys.executable)" 2>$null); if ($p) { $cands += "$p".Trim() } }
-    foreach ($g in @("$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
-                     "$env:ProgramFiles\Python3*\python.exe", "C:\Python3*\python.exe")) {
-        Get-ChildItem $g -ErrorAction SilentlyContinue | ForEach-Object { $cands += $_.FullName }
+    foreach ($c in ($cands | Select-Object -Unique)) {
+        if (Test-Py $c) { return $c }
     }
-    foreach ($c in $cands) { if (Test-Py $c) { return $c } }
     return $null
+}
+
+function Install-PythonSilently {
+    Say "Calisan Python yok -> Resmi sessiz kurulum baslatiliyor..."
+    $pyVer = "3.12.9"
+    $is64 = [Environment]::Is64BitOperatingSystem
+    $urls = if ($is64) {
+        @(
+            "https://www.python.org/ftp/python/$pyVer/python-$pyVer-amd64.exe",
+            "https://cdn.npmmirror.com/binaries/python/$pyVer/python-$pyVer-amd64.exe"
+        )
+    } else {
+        @(
+            "https://www.python.org/ftp/python/$pyVer/python-$pyVer.exe",
+            "https://cdn.npmmirror.com/binaries/python/$pyVer/python-$pyVer.exe"
+        )
+    }
+
+    $installerPath = "$env:TEMP\python-$pyVer-setup.exe"
+    $downloaded = $false
+    foreach ($u in $urls) {
+        Say "Python $pyVer indiriliyor (~26 MB)..."
+        if (Download-File $u $installerPath) {
+            $downloaded = $true
+            break
+        }
+    }
+
+    if ($downloaded) {
+        Say "Python $pyVer sessizce kuruluyor (arkaplanda, kullanici onayi gerektirmez)..."
+        # /quiet: tamamen sessiz, hicbir pencere/onay sormaz
+        # InstallAllUsers=1: Program Files altina tum kullanicilar icin kurar
+        # PrependPath=1: Otomatik PATH ortam degiskenine ekler
+        # Include_pip=1: pip'i hazir kurar
+        # Include_test=0, Include_doc=0, Include_tcltk=0: gereksiz dosya yuklemez
+        $pyArgs = "/quiet InstallAllUsers=1 PrependPath=1 Include_pip=1 Include_test=0 Include_doc=0 Include_tcltk=0 SimpleInstall=1"
+        $proc = Start-Process -FilePath $installerPath -ArgumentList $pyArgs -Wait -PassThru
+        Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+    } else {
+        # Dogrudan indirme basarisiz olursa alternatif olarak winget ile sessizce dene
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+            Say "Resmi sunucudan alinamadi -> winget ile sessiz kuruluyor..."
+            Nat "winget" @("install","--id","Python.Python.3.12","-e","--silent","--accept-package-agreements","--accept-source-agreements","--override","/quiet InstallAllUsers=1 PrependPath=1 Include_pip=1") | Out-Null
+        }
+    }
+
+    Refresh-EnvPath
 }
 
 $pyExe = Find-Python
 if (-not $pyExe) {
-    Say "Calisan Python yok -> winget ile kuruluyor..."
-    Nat "winget" @("install","--id","Python.Python.3.12","-e","--accept-package-agreements","--accept-source-agreements") | Out-Null
-    $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
-    $pyExe = Find-Python
+    Install-PythonSilently
+    for ($attempt = 1; $attempt -le 5 -and -not $pyExe; $attempt++) {
+        Refresh-EnvPath
+        $pyExe = Find-Python
+        if (-not $pyExe) { Start-Sleep -Seconds 1 }
+    }
 }
-if (-not $pyExe) { Die "Calisan Python bulunamadi. python.org'dan kur ('Add python to PATH' isaretli) ve tekrar dene. (Ipucu: Ayarlar > Uygulamalar > Uygulama takma adlari > python.exe KAPAT.)" }
+if (-not $pyExe) { Die "Python otomatik olarak kurulamadi. Internet baglantinizi kontrol edip tekrar deneyin." }
 $pyDir = Split-Path $pyExe
 $pyw = Join-Path $pyDir "pythonw.exe"
 if (-not (Test-Path $pyw)) { $pyw = $pyExe }
@@ -88,7 +193,7 @@ Say "Python: $pyExe"
 # PySide6 - import KONTROLU YOK (Qt DLL yuklemesi Defender ile dakikalarca asili kalabiliyordu).
 # Dogrudan pip: kuruluysa "already satisfied" deyip ~2sn'de gecer, degilse kurar. Qt yuklenmez.
 Say "PySide6 (pip - kuruluysa aninda gecer, degilse ~250 MB indirir)..."
-& $pyExe -m pip install --upgrade pip
+& $pyExe -m pip install --upgrade pip --quiet 2>&1 | Out-Null
 $pysideOk = $false
 for ($i = 1; $i -le 4 -and -not $pysideOk; $i++) {
     if ($i -gt 1) { Say "PySide6 tekrar deneniyor ($i/4) - baglanti kopmustu..." }
@@ -138,18 +243,49 @@ catch { $tmp = "$env:SystemRoot\Temp\zapret-win-bundle" }
 
 if (Test-Path "$tmp\.git") {
     Say "bundle guncelleniyor..."; & git -C $tmp pull --ff-only
-} else {
+} elseif (Get-Command git -ErrorAction SilentlyContinue) {
     Say "zapret-win-bundle indiriliyor (~60 MB, biraz surer)..."
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     & git clone --depth 1 $Bundle $tmp
+} else {
+    Say "zapret-win-bundle ZIP olarak indiriliyor..."
+    $zipBundle = "$env:TEMP\zapret-bundle.zip"
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    $bundleZipUrl = "https://github.com/bol-van/zapret-win-bundle/archive/refs/heads/master.zip"
+    if (Download-File $bundleZipUrl $zipBundle) {
+        $extractTmp = "$env:TEMP\zapret-extract"
+        Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
+        Expand-Archive -Path $zipBundle -DestinationPath $extractTmp -Force
+        Remove-Item $zipBundle -Force -ErrorAction SilentlyContinue
+        if (Test-Path "$extractTmp\zapret-win-bundle-master") {
+            New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+            Copy-Item "$extractTmp\zapret-win-bundle-master\*" $tmp -Recurse -Force
+            Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
     Say "bundle eksik -> temiz yeniden indiriliyor..."
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-    & git clone --depth 1 $Bundle $tmp
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        & git clone --depth 1 $Bundle $tmp
+    } else {
+        $zipBundle = "$env:TEMP\zapret-bundle.zip"
+        if (Download-File "https://github.com/bol-van/zapret-win-bundle/archive/refs/heads/master.zip" $zipBundle) {
+            $extractTmp = "$env:TEMP\zapret-extract"
+            Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
+            Expand-Archive -Path $zipBundle -DestinationPath $extractTmp -Force
+            Remove-Item $zipBundle -Force -ErrorAction SilentlyContinue
+            if (Test-Path "$extractTmp\zapret-win-bundle-master") {
+                New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+                Copy-Item "$extractTmp\zapret-win-bundle-master\*" $tmp -Recurse -Force
+                Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }
 if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
-    Die "Bundle indirilemedi ($tmp). Yukaridaki git hatasina bak. github.com'a erisim / disk / '$tmp' izni kontrol et."
+    Die "Bundle indirilemedi ($tmp). github.com'a erisim / disk / '$tmp' iznini kontrol edin."
 }
 
 Stop-AsenaDPI   # kopyalamadan ONCE winws+tray durdur (yoksa WinDivert64.sys kilitli -> kopya hatasi)

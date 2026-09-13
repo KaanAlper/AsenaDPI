@@ -10,27 +10,54 @@ $Dir  = "$env:USERPROFILE\AsenaDPI"
 
 Write-Host ">> AsenaDPI kurulumu basliyor..." -ForegroundColor Cyan
 
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Host ">> git yok -> winget ile kuruluyor..." -ForegroundColor Cyan
-        winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
-        $env:Path = [Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [Environment]::GetEnvironmentVariable("Path","User")
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]'Tls12,Tls13'
+$ZipUrl = "https://github.com/KaanAlper/AsenaDPI/archive/refs/heads/master.zip"
+
+if (Get-Command git -ErrorAction SilentlyContinue) {
+    if (Test-Path "$Dir\.git") {
+        Write-Host ">> Mevcut kurulum guncelleniyor: $Dir" -ForegroundColor Cyan
+        git -C $Dir pull --ff-only 2>&1 | Out-Null
+    } else {
+        Write-Host ">> Klonlaniyor -> $Dir" -ForegroundColor Cyan
+        git clone --depth 1 $Repo $Dir 2>&1 | Out-Null
+    }
+} else {
+    Write-Host ">> AsenaDPI dosyalari indiriliyor..." -ForegroundColor Cyan
+    $zipPath = "$env:TEMP\AsenaDPI-master.zip"
+    $downloaded = $false
+    if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        & curl.exe -f -sSL -o $zipPath $ZipUrl 2>&1 | Out-Null
+        if ((Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1000) { $downloaded = $true }
+    }
+    if (-not $downloaded) {
+        try {
+            $wc = New-Object System.Net.WebClient
+            $wc.Headers.Add("User-Agent", "Mozilla/5.0")
+            $wc.DownloadFile($ZipUrl, $zipPath)
+            if ((Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1000) { $downloaded = $true }
+        } catch {}
+    }
+    if (-not $downloaded) {
+        try {
+            Invoke-WebRequest -Uri $ZipUrl -OutFile $zipPath -UseBasicParsing -TimeoutSec 60 -ErrorAction Stop
+            if ((Test-Path $zipPath) -and (Get-Item $zipPath).Length -gt 1000) { $downloaded = $true }
+        } catch {}
+    }
+    if ($downloaded) {
+        $extractTmp = "$env:TEMP\AsenaDPI-extract"
+        Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
+        Expand-Archive -Path $zipPath -DestinationPath $extractTmp -Force
+        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+        if (Test-Path "$extractTmp\AsenaDPI-master") {
+            New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+            Copy-Item "$extractTmp\AsenaDPI-master\*" $Dir -Recurse -Force
+            Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
+        }
     }
 }
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    Write-Host "!! git kurulamadi. Once git kur (https://git-scm.com) ve tekrar dene." -ForegroundColor Red
-    return
-}
 
-if (Test-Path "$Dir\.git") {
-    Write-Host ">> Mevcut kurulum guncelleniyor: $Dir" -ForegroundColor Cyan
-    git -C $Dir pull --ff-only 2>&1 | Out-Null
-} else {
-    Write-Host ">> Klonlaniyor -> $Dir" -ForegroundColor Cyan
-    git clone --depth 1 $Repo $Dir 2>&1 | Out-Null
-}
 if (-not (Test-Path "$Dir\windows\install.ps1")) {
-    Write-Host "!! Klonlama basarisiz ($Dir). Internet/git kontrol et." -ForegroundColor Red
+    Write-Host "!! Kurulum dosyalari alinamadi ($Dir). Internet baglantinizi kontrol edin." -ForegroundColor Red
     return
 }
 
