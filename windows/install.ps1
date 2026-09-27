@@ -1,13 +1,8 @@
-# AsenaDPI - Windows kurulum (winws/WinDivert + DoH + tray).
+﻿# AsenaDPI - Windows kurulum (winws/WinDivert + DoH + tray).
 # Yonetici PowerShell'de calistir:
 #   Set-ExecutionPolicy -Scope Process Bypass -Force; .\install.ps1
-#
-# Yaptigi: zapret-win-bundle indir (winws.exe + WinDivert + blockcheck), Program Files'a kur,
-# kullanici config'i olustur, tray'i logon'da YONETICI olarak baslatan gorev ekle (UAC'siz),
-# Python + PySide6 kontrol.
 #Requires -RunAsAdministrator
-# NOT: $ErrorActionPreference'i STOP yapMIYORUZ - winget/git/python/pip stderr'e yazinca
-# PS 5.1 scripti oldururdu. Kritik adimlari asagida acikca 'Die' ile kontrol ediyoruz.
+[System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $Bundle     = "https://github.com/bol-van/zapret-win-bundle"
 $InstallDir = "$env:ProgramFiles\AsenaDPI"
@@ -15,8 +10,14 @@ $Cfg        = "$env:APPDATA\AsenaDPI"
 $RepoDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot   = Split-Path -Parent $RepoDir
 
-function Say($m) { Write-Host ">> $m" -ForegroundColor Cyan }
-function Die($m) { Write-Host "!! $m" -ForegroundColor Red; exit 1 }
+. (Join-Path $RepoDir 'tui.ps1')
+Clear-Host
+Banner
+
+$ans = Confirm "AsenaDPI Kurulumunu baslatmak istiyor musun?" "Evet, kur" "Iptal" $true
+if (-not $ans) { Write-Host "`nIptal edildi."; exit 0 }
+Write-Host ""
+
 # native komutu calistir, tum ciktiyi (stdout+stderr) yut, exit code don
 function Nat { param([string]$File, [string[]]$Args)
     & $File @Args 2>&1 | Out-Null
@@ -146,11 +147,11 @@ function Install-PythonSilently {
     $installerPath = "$env:TEMP\python-$pyVer-setup.exe"
     $downloaded = $false
     foreach ($u in $urls) {
-        Say "Python $pyVer indiriliyor (~26 MB)..."
-        if (Download-File $u $installerPath) {
+        try {
+            Get-WithBar $u $installerPath "Python $pyVer" 0
             $downloaded = $true
             break
-        }
+        } catch { }
     }
 
     if ($downloaded) {
@@ -197,7 +198,7 @@ Say "PySide6 (pip - kuruluysa aninda gecer, degilse ~250 MB indirir)..."
 $pysideOk = $false
 for ($i = 1; $i -le 4 -and -not $pysideOk; $i++) {
     if ($i -gt 1) { Say "PySide6 tekrar deneniyor ($i/4) - baglanti kopmustu..." }
-    & $pyExe -m pip install --timeout 120 --retries 8 PySide6
+    With-Spinner "PySide6 kur/guncelle" { & $pyExe -m pip install --timeout 120 --retries 8 PySide6 --quiet 2>&1 | Out-Null }
     & $pyExe -m pip show PySide6 2>&1 | Out-Null   # Qt DLL YUKLEMEDEN kurulu mu bak
     $pysideOk = ($LASTEXITCODE -eq 0)
 }
@@ -248,21 +249,21 @@ if (Test-Path "$tmp\.git") {
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     & git clone --depth 1 $Bundle $tmp
 } else {
-    Say "zapret-win-bundle ZIP olarak indiriliyor..."
     $zipBundle = "$env:TEMP\zapret-bundle.zip"
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
     $bundleZipUrl = "https://github.com/bol-van/zapret-win-bundle/archive/refs/heads/master.zip"
-    if (Download-File $bundleZipUrl $zipBundle) {
+    try {
+        Get-WithBar $bundleZipUrl $zipBundle "zapret-win-bundle" 0
         $extractTmp = "$env:TEMP\zapret-extract"
         Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
-        Expand-Archive -Path $zipBundle -DestinationPath $extractTmp -Force
+        With-Spinner "ZIP ayiklaniyor" { Expand-Archive -Path $zipBundle -DestinationPath $extractTmp -Force }
         Remove-Item $zipBundle -Force -ErrorAction SilentlyContinue
         if (Test-Path "$extractTmp\zapret-win-bundle-master") {
             New-Item -ItemType Directory -Force -Path $tmp | Out-Null
             Copy-Item "$extractTmp\zapret-win-bundle-master\*" $tmp -Recurse -Force
             Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
         }
-    }
+    } catch { }
 }
 if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
     Say "bundle eksik -> temiz yeniden indiriliyor..."
@@ -271,17 +272,18 @@ if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
         & git clone --depth 1 $Bundle $tmp
     } else {
         $zipBundle = "$env:TEMP\zapret-bundle.zip"
-        if (Download-File "https://github.com/bol-van/zapret-win-bundle/archive/refs/heads/master.zip" $zipBundle) {
+        try {
+            Get-WithBar "https://github.com/bol-van/zapret-win-bundle/archive/refs/heads/master.zip" $zipBundle "zapret-win-bundle (fallback)" 0
             $extractTmp = "$env:TEMP\zapret-extract"
             Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
-            Expand-Archive -Path $zipBundle -DestinationPath $extractTmp -Force
+            With-Spinner "ZIP ayiklaniyor" { Expand-Archive -Path $zipBundle -DestinationPath $extractTmp -Force }
             Remove-Item $zipBundle -Force -ErrorAction SilentlyContinue
             if (Test-Path "$extractTmp\zapret-win-bundle-master") {
                 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
                 Copy-Item "$extractTmp\zapret-win-bundle-master\*" $tmp -Recurse -Force
                 Remove-Item $extractTmp -Recurse -Force -ErrorAction SilentlyContinue
             }
-        }
+        } catch {}
     }
 }
 if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
@@ -290,11 +292,10 @@ if (-not (Test-Path "$tmp\zapret-winws\winws.exe")) {
 
 Stop-AsenaDPI   # kopyalamadan ONCE winws+tray durdur (yoksa WinDivert64.sys kilitli -> kopya hatasi)
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-Say "Bundle kopyalaniyor -> $InstallDir (zapret-winws + blockcheck + cygwin + tools)..."
-# -ErrorAction SilentlyContinue: WinDivert64.sys surucu yuklu ise kilitli olabilir; ZATEN ayni
-# dosya orada oldugundan uzerine yazamamasi zararsiz (kritik winws.exe kontrolu asagida).
-Get-ChildItem -Path $tmp -Force | Where-Object { $_.Name -ne ".git" -and $_.Name -ne ".github" } |
-    ForEach-Object { Copy-Item $_.FullName $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
+With-Spinner "Dosyalar kopyalaniyor ($InstallDir)" {
+    Get-ChildItem -Path $tmp -Force | Where-Object { $_.Name -ne ".git" -and $_.Name -ne ".github" } |
+        ForEach-Object { Copy-Item $_.FullName $InstallDir -Recurse -Force -ErrorAction SilentlyContinue }
+}
 if (-not (Test-Path "$InstallDir\zapret-winws\winws.exe")) { Die "Kopyalama basarisiz -> $InstallDir\zapret-winws" }
 # blockcheck ('En iyi ayar') prerequisites: winws.exe + mdig.exe SART. Eksik kopyalanmissa
 # (kismi kopya) blockcheck saniyelerde cikip yanlis 'DNS yeter' der -> eksik dosyalari tekrar kopyala.
@@ -335,48 +336,50 @@ if (-not (Test-Path "$Cfg\tcp443.conf")) {
 }
 
 # --- 3) tray'i logon'da YONETICI olarak baslatan gorev (UAC'siz) ---
-Say "Autostart gorevi (logon, en yuksek yetki)..."
 try {
-    $act = New-ScheduledTaskAction -Execute $pyw -Argument "`"$InstallDir\asena-dpi-tray.pyw`""
-    $trg = New-ScheduledTaskTrigger -AtLogOn
-    $prn = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -RunLevel Highest -LogonType Interactive
-    $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-    Register-ScheduledTask -TaskName "AsenaDPI-Tray" -Action $act -Trigger $trg -Principal $prn -Settings $set -Force -ErrorAction Stop | Out-Null
+    With-Spinner "Otomatik baslatma gorevi (Yonetici)" {
+        $act = New-ScheduledTaskAction -Execute $pyw -Argument "`"$InstallDir\asena-dpi-tray.pyw`""
+        $trg = New-ScheduledTaskTrigger -AtLogOn
+        $prn = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" -RunLevel Highest -LogonType Interactive
+        $set = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        Register-ScheduledTask -TaskName "AsenaDPI-Tray" -Action $act -Trigger $trg -Principal $prn -Settings $set -Force -ErrorAction Stop | Out-Null
+    }
 } catch {
     Say "UYARI: autostart gorevi kurulamadi ($($_.Exception.Message)). Tray'i elle baslatabilirsin:"
     Write-Host "   `"$pyw`" `"$InstallDir\asena-dpi-tray.pyw`"" -ForegroundColor Yellow
 }
 
 # --- 3b) Baslat menusu + masaustu kisayolu (aranabilir, ikonlu) ---
-# Kisayol schtasks /run ile tray'i YONETICI gorevle baslatir (UAC sormaz). Ikon = kurt+DPI.
-Say "Kisayollar (Baslat menusu + masaustu)..."
 try {
-    $ws = New-Object -ComObject WScript.Shell
-    $iconRef = $(if (Test-Path $Ico) { "$Ico,0" } else { "$pyw,0" })
-    $targets = @(
-        "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\AsenaDPI.lnk",
-        "$([Environment]::GetFolderPath('Desktop'))\AsenaDPI.lnk"
-    )
-    foreach ($lnk in $targets) {
-        $sc = $ws.CreateShortcut($lnk)
-        $sc.TargetPath = "$env:SystemRoot\System32\schtasks.exe"
-        $sc.Arguments = "/run /tn AsenaDPI-Tray"
-        $sc.IconLocation = $iconRef
-        $sc.Description = "AsenaDPI - DPI/DNS bypass"
-        $sc.WindowStyle = 7        # minimized -> schtasks konsol parlamasi minimum
-        $sc.Save()
+    With-Spinner "Kisayollar (Masaustu & Baslat)" {
+        $ws = New-Object -ComObject WScript.Shell
+        $iconRef = $(if (Test-Path $Ico) { "$Ico,0" } else { "$pyw,0" })
+        $targets = @(
+            "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\AsenaDPI.lnk",
+            "$([Environment]::GetFolderPath('Desktop'))\AsenaDPI.lnk"
+        )
+        foreach ($lnk in $targets) {
+            $sc = $ws.CreateShortcut($lnk)
+            $sc.TargetPath = "$env:SystemRoot\System32\schtasks.exe"
+            $sc.Arguments = "/run /tn AsenaDPI-Tray"
+            $sc.IconLocation = $iconRef
+            $sc.Description = "AsenaDPI - DPI/DNS bypass"
+            $sc.WindowStyle = 7        # minimized -> schtasks konsol parlamasi minimum
+            $sc.Save()
+        }
     }
 } catch {
     Say "UYARI: kisayol olusturulamadi ($($_.Exception.Message))."
 }
 
 # --- 4) tray'i SIMDI baslat (sonraki acilista gorev zaten baslatir) ---
-Say "Tray baslatiliyor..."
-Stop-AsenaDPI   # eski tray kalmadigindan emin ol (cift tray olmasin)
-if ((Nat "schtasks" @("/run","/tn","AsenaDPI-Tray")) -ne 0) {
-    Start-Process $pyw -ArgumentList "`"$InstallDir\asena-dpi-tray.pyw`""   # gorev yoksa dogrudan
+With-Spinner "AsenaDPI Tray baslatiliyor" {
+    Stop-AsenaDPI   # eski tray kalmadigindan emin ol (cift tray olmasin)
+    if ((Nat "schtasks" @("/run","/tn","AsenaDPI-Tray")) -ne 0) {
+        Start-Process $pyw -ArgumentList "`"$InstallDir\asena-dpi-tray.pyw`""   # gorev yoksa dogrudan
+    }
 }
 
-Say "KURULUM TAMAM."
-Write-Host "   Tray sistem tepsisinde (AsenaDPI ikonu) - SOL tik = ac/kapat, SAG tik = menu" -ForegroundColor Gray
-Write-Host "   Sonraki her acilista otomatik baslar (yonetici, UAC'siz)." -ForegroundColor Gray
+Write-Host ""
+Box $C.ok "Kurulum Tamamlandi" "Tray sistem tepsisinde (AsenaDPI ikonu). SOL tik = ac/kapat, SAG tik = menu`nSonraki her acilista yonetici (UAC'siz) olarak otomatik baslar."
+Write-Host ""
