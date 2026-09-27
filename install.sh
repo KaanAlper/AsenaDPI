@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# AsenaDPI kurulum — Debian / Ubuntu / Kali / Arch / Fedora / openSUSE.
-# Normal kullanici olarak calistir (sudo'yu kendisi cagirir):  ./install.sh
-# root olarak da calisir (container/CI): sudo gerekmez.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -11,16 +8,64 @@ BINDIR="/usr/local/bin"
 USER_NAME="$(id -un)"
 CFG="$HOME/.config/asena-dpi"
 
-say() { printf '\033[1;36m>> %s\033[0m\n' "$*"; }
-die() { printf '\033[1;31m!! %s\033[0m\n' "$*" >&2; exit 1; }
+GUM_BIN="gum"
+if ! command -v gum >/dev/null 2>&1; then
+    printf '\033[1;36m>> Arayuz araci (gum) indiriliyor...\033[0m\n'
+    GUM_DIR="/tmp/asena_gum"
+    mkdir -p "$GUM_DIR"
+    curl -sL "https://github.com/charmbracelet/gum/releases/download/v2.0.2/gum_2.0.2_Linux_x86_64.tar.gz" | tar -xz -C "$GUM_DIR" 2>/dev/null || true
+    GUM_BIN="$(find "$GUM_DIR" -name "gum" -type f | head -n 1)"
+    [ -n "$GUM_BIN" ] && chmod +x "$GUM_BIN" || GUM_BIN="gum"
+fi
 
-# root ise sudo gerekmez; degilse sudo kullan (yoksa hata)
+banner() {
+    if [ -x "$GUM_BIN" ]; then
+        "$GUM_BIN" style --foreground 212 --border-foreground 212 --border double --align center --width 50 --margin "1 2" --padding "1 2" "AsenaDPI Kurulum"
+    else
+        printf '\033[1;35m=== AsenaDPI Kurulum ===\033[0m\n'
+    fi
+}
+
+spin() {
+    local title="$1"
+    shift
+    if [ -x "$GUM_BIN" ]; then
+        "$GUM_BIN" spin --spinner dot --title "$title" -- bash -c "$*"
+    else
+        printf '\033[1;36m>> %s\033[0m\n' "$title"
+        bash -c "$*"
+    fi
+}
+
+say() {
+    if [ -x "$GUM_BIN" ]; then
+        "$GUM_BIN" style --foreground 86 ">> $1"
+    else
+        printf '\033[1;36m>> %s\033[0m\n' "$1"
+    fi
+}
+
+die() {
+    if [ -x "$GUM_BIN" ]; then
+        "$GUM_BIN" style --foreground 196 "!! $1"
+    else
+        printf '\033[1;31m!! %s\033[0m\n' "$1" >&2
+    fi
+    exit 1
+}
+
+clear
+banner
+
+if [ -x "$GUM_BIN" ]; then
+    "$GUM_BIN" confirm "AsenaDPI'yi kurmak istiyor musunuz?" || { say "Iptal edildi."; exit 0; }
+fi
+
 if [ "$(id -u)" = 0 ]; then SUDO=""; else
   command -v sudo >/dev/null || die "root degilsin ve sudo yok. root olarak calistir ya da sudo kur."
   SUDO="sudo"
 fi
 
-# --- 1) dagitim + paket yoneticisi ---
 . /etc/os-release 2>/dev/null || true
 say "Dagitim: ${PRETTY_NAME:-bilinmiyor}"
 if   command -v apt-get >/dev/null; then PM=apt
@@ -29,115 +74,112 @@ elif command -v dnf     >/dev/null; then PM=dnf
 elif command -v zypper  >/dev/null; then PM=zypper
 else die "Desteklenen paket yoneticisi yok (apt/pacman/dnf/zypper)."; fi
 
-say "Bagimliliklar kuruluyor ($PM)..."
+export SUDO PM
+step_deps() {
 case "$PM" in
   apt)
-    # ZORUNLU build/runtime deps (tek basina -> her zaman kurulur)
     export DEBIAN_FRONTEND=noninteractive
-    $SUDO apt-get update -y
-    $SUDO apt-get install -y git make gcc nftables curl ca-certificates iptables python3 python3-pip \
-        zlib1g-dev libcap-dev libnetfilter-queue-dev libnfnetlink-dev libmnl-dev
-    # PySide6 apt'te (Debian'da olabilir; Ubuntu 24.04'te YOK -> pip fallback yakalar) - best-effort
-    $SUDO apt-get install -y python3-pyside6.qtwidgets python3-pyside6.qtgui python3-pyside6.qtcore 2>/dev/null || true
+    $SUDO apt-get update -y >/dev/null 2>&1 || true
+    $SUDO apt-get install -y git make gcc nftables curl ca-certificates iptables python3 python3-pip zlib1g-dev libcap-dev libnetfilter-queue-dev libnfnetlink-dev libmnl-dev >/dev/null 2>&1
+    $SUDO apt-get install -y python3-pyside6.qtwidgets python3-pyside6.qtgui python3-pyside6.qtcore >/dev/null 2>&1 || true
     ;;
   pacman)
-    # Her paketi TEK TEK kur -> biri cakisirsa (or. CachyOS'ta zlib <-> zlib-ng-compat) sadece
-    # o atlanir, transaction bozulmaz. zlib gibi zaten saglanan paketler zaten atlanir.
-    $SUDO pacman -Sy --noconfirm 2>/dev/null || true
+    $SUDO pacman -Sy --noconfirm >/dev/null 2>&1 || true
     for p in git make gcc nftables curl base-devel zlib libcap libnetfilter_queue libnfnetlink libmnl python pyside6; do
-        $SUDO pacman -S --needed --noconfirm "$p" 2>/dev/null || echo "   ($p atlandi - cakisma/zaten var/bulunamadi)"
+        $SUDO pacman -S --needed --noconfirm "$p" >/dev/null 2>&1 || true
     done
     ;;
   dnf)
-    $SUDO dnf install -y git make gcc nftables curl iptables python3 python3-pip \
-        zlib-devel libcap-devel libnetfilter_queue-devel libnfnetlink-devel libmnl-devel
-    $SUDO dnf install -y python3-pyside6 2>/dev/null || true
+    $SUDO dnf install -y git make gcc nftables curl iptables python3 python3-pip zlib-devel libcap-devel libnetfilter_queue-devel libnfnetlink-devel libmnl-devel >/dev/null 2>&1
+    $SUDO dnf install -y python3-pyside6 >/dev/null 2>&1 || true
     ;;
   zypper)
-    $SUDO zypper install -y git make gcc nftables curl python3 python3-pip \
-        zlib-devel libcap-devel libnetfilter_queue-devel libnfnetlink-devel libmnl-devel
-    $SUDO zypper install -y python3-pyside6 2>/dev/null || true
+    $SUDO zypper install -y git make gcc nftables curl python3 python3-pip zlib-devel libcap-devel libnetfilter_queue-devel libnfnetlink-devel libmnl-devel >/dev/null 2>&1
+    $SUDO zypper install -y python3-pyside6 >/dev/null 2>&1 || true
     ;;
 esac
+}
+export -f step_deps
+spin "Bagimliliklar kuruluyor ($PM)" "step_deps"
 
-# PySide6 dogrula, yoksa pip fallback
+step_pyside() {
 if ! python3 -c 'import PySide6.QtWidgets' 2>/dev/null; then
-  say "PySide6 paketten gelmedi -> pip ile kuruluyor..."
-  python3 -m pip install --user PySide6 2>/dev/null \
-    || python3 -m pip install --user --break-system-packages PySide6 2>/dev/null \
-    || say "UYARI: PySide6 kurulamadi (tray calismaz). Elle: pip install PySide6"
+  python3 -m pip install --user PySide6 >/dev/null 2>&1 \
+    || python3 -m pip install --user --break-system-packages PySide6 >/dev/null 2>&1 || true
 fi
+}
+export -f step_pyside
+spin "PySide6 kontrol ediliyor" "step_pyside"
 
-# --- 2) zapret'i indir + nfqws ---
-say "zapret indiriliyor..."
+export ZAPRET_DIR ZAPRET_URL
+step_zapret() {
 $SUDO mkdir -p "$(dirname "$ZAPRET_DIR")"
 if [ -d "$ZAPRET_DIR/.git" ]; then
-  $SUDO git -C "$ZAPRET_DIR" pull --ff-only || true
+  $SUDO git -C "$ZAPRET_DIR" pull --ff-only >/dev/null 2>&1 || true
 else
-  $SUDO git clone --depth 1 "$ZAPRET_URL" "$ZAPRET_DIR"
+  $SUDO git clone --depth 1 "$ZAPRET_URL" "$ZAPRET_DIR" >/dev/null 2>&1
 fi
+}
+export -f step_zapret
+spin "Zapret indiriliyor" "step_zapret"
 
-say "nfqws derleniyor (make -C nfq)..."
+export BINDIR
+step_nfq() {
 if $SUDO make -C "$ZAPRET_DIR/nfq" >/dev/null 2>&1 && [ -x "$ZAPRET_DIR/nfq/nfqws" ]; then
   $SUDO install -m755 "$ZAPRET_DIR/nfq/nfqws" "$BINDIR/nfqws"
-  say "nfqws derlendi ✓"
 else
-  say "Derleme olmadi, repodaki hazir binary aranıyor..."
   B="$($SUDO find "$ZAPRET_DIR/binaries" -type f -name nfqws 2>/dev/null | head -1)"
-  [ -n "$B" ] || die "nfqws derlenemedi. Eksik gelistirme kutuphanesi olabilir (zlib / libnetfilter_queue / libnfnetlink / libmnl -dev)."
-  $SUDO install -m755 "$B" "$BINDIR/nfqws"
-  say "hazir nfqws kuruldu ✓"
+  [ -n "$B" ] && $SUDO install -m755 "$B" "$BINDIR/nfqws" || exit 1
 fi
 [ -x "$ZAPRET_DIR/nfq/nfqws" ] || $SUDO install -Dm755 "$BINDIR/nfqws" "$ZAPRET_DIR/nfq/nfqws"
+}
+export -f step_nfq
+spin "nfqws hazirlaniyor" "step_nfq"
 
-# blockcheck ('En iyi ayar') mdig (DNS) + tpws de ister — yoksa 'prerequisites' hatasi verip
-# HIC calismaz (sonuc: sahte 'strateji bulunamadi'). Zapret agacinda yerinde derle.
+step_mdig() {
 for sub in mdig tpws; do
-  if $SUDO make -C "$ZAPRET_DIR/$sub" >/dev/null 2>&1 && [ -x "$ZAPRET_DIR/$sub/$sub" ]; then
-    say "$sub derlendi ✓ (blockcheck icin)"
-  else
-    say "UYARI: $sub derlenemedi — 'En iyi ayar' (blockcheck) calismayabilir."
-  fi
+  $SUDO make -C "$ZAPRET_DIR/$sub" >/dev/null 2>&1 || true
 done
+}
+export -f step_mdig
+spin "Bilesenler derleniyor (mdig, tpws)" "step_mdig"
 
-# --- 3) scriptler + tray ---
-say "Scriptler kuruluyor -> $BINDIR"
+export REPO_DIR
+step_scripts() {
 for f in asena-dpi-on asena-dpi-off asena-dpi-optimize asena-dpi-update asena-dpi-tray; do
   $SUDO install -m755 "$REPO_DIR/bin/$f" "$BINDIR/$f"
 done
+}
+export -f step_scripts
+spin "Scriptler kopyalaniyor" "step_scripts"
 
-# --- 4) sudoers (parolasiz on/off/optimize) — yalniz normal kullanicida ---
+export USER_NAME
+step_cfg() {
 if [ "$USER_NAME" != root ]; then
-  say "sudoers (parolasiz kontrol) ..."
-  echo "$USER_NAME ALL=(root) NOPASSWD: $BINDIR/asena-dpi-on, $BINDIR/asena-dpi-off, $BINDIR/asena-dpi-optimize, $BINDIR/asena-dpi-update" \
-    | $SUDO tee /etc/sudoers.d/asena-dpi >/dev/null
+  echo "$USER_NAME ALL=(root) NOPASSWD: $BINDIR/asena-dpi-on, $BINDIR/asena-dpi-off, $BINDIR/asena-dpi-optimize, $BINDIR/asena-dpi-update" | $SUDO tee /etc/sudoers.d/asena-dpi >/dev/null
   $SUDO chmod 440 /etc/sudoers.d/asena-dpi
 fi
 
-# --- 5) NetworkManager dispatcher (ag degisince reapply) ---
 if [ -d /etc/NetworkManager/dispatcher.d ]; then
-  say "Ag-degisikligi hook'u (NetworkManager) ..."
   $SUDO install -m755 "$REPO_DIR/dispatcher/90-asena-dpi" /etc/NetworkManager/dispatcher.d/90-asena-dpi
-else
-  say "NetworkManager yok — ag-degisikligi otomatik reapply atlandi (tray'den 'DNS onar')."
 fi
+}
+export -f step_cfg
+spin "Sistem ayarlari (Sudoers & NetworkManager)" "step_cfg"
 
-# --- 6) kullanici config ---
-say "Ayar/blacklist -> $CFG"
+export CFG
+step_user() {
 mkdir -p "$CFG"
-echo "$REPO_DIR" > "$CFG/repo_dir"   # 'Güncelle' bunu kullanır (git pull)
-[ -f "$REPO_DIR/config/asena-dpi.png" ] && cp -f "$REPO_DIR/config/asena-dpi.png" "$CFG/asena-dpi.png"   # pencere ikonu (kurt+DPI)
+echo "$REPO_DIR" > "$CFG/repo_dir"
+[ -f "$REPO_DIR/config/asena-dpi.png" ] && cp -f "$REPO_DIR/config/asena-dpi.png" "$CFG/asena-dpi.png"
 [ -f "$CFG/blacklist.txt" ] || cp "$REPO_DIR/config/blacklist.txt" "$CFG/blacklist.txt"
 [ -f "$CFG/settings.conf" ] || cat > "$CFG/settings.conf" <<EOF
-# AsenaDPI ayarlari (tray yazar)
 MODE=blacklist
 HTTP=1
 HTTP2=1
 HTTP3=bypass
 EOF
 
-# --- 7) autostart (tum masaustleri: XDG) ---
-say "Autostart (XDG .desktop) ..."
 mkdir -p "$HOME/.config/autostart"
 cat > "$HOME/.config/autostart/asena-dpi-tray.desktop" <<EOF
 [Desktop Entry]
@@ -150,29 +192,31 @@ StartupWMClass=asena-dpi
 Terminal=false
 X-GNOME-Autostart-enabled=true
 EOF
+}
+export -f step_user
+spin "Kullanici dosyalari ve Autostart" "step_user"
 
-# --- 8) GNOME tray ikonu (GNOME legacy tray GOSTERMEZ -> AppIndicator uzantisi) ---
+step_gnome() {
 DESKTOP="${XDG_CURRENT_DESKTOP:-}${DESKTOP_SESSION:-}"
 if echo "$DESKTOP" | grep -qi gnome || pgrep -x gnome-shell >/dev/null 2>&1; then
-  say "GNOME algilandi — tray ikonu icin AppIndicator uzantisi kuruluyor..."
   case "$PM" in
-    apt)    $SUDO apt-get install -y gnome-shell-extension-appindicator || true ;;
-    dnf)    $SUDO dnf install -y gnome-shell-extension-appindicator || true ;;
-    zypper) $SUDO zypper install -y gnome-shell-extension-appindicator || true ;;
-    pacman) echo "   Arch+GNOME: AUR'dan 'gnome-shell-extension-appindicator' kur." ;;
+    apt)    $SUDO apt-get install -y gnome-shell-extension-appindicator >/dev/null 2>&1 || true ;;
+    dnf)    $SUDO dnf install -y gnome-shell-extension-appindicator >/dev/null 2>&1 || true ;;
+    zypper) $SUDO zypper install -y gnome-shell-extension-appindicator >/dev/null 2>&1 || true ;;
   esac
-  echo "   Etkinlestir: 'Extensions' -> AppIndicator/KStatusNotifier ON (ya da oturumu kapat/ac)."
 fi
+}
+export -f step_gnome
+spin "GNOME eklentileri (gerekliyse)" "step_gnome"
 
-# --- 9) tray'i ŞİMDİ başlat (sonraki açılışta XDG autostart zaten başlatır) ---
 if [ "$USER_NAME" != root ] && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
     pkill -f "$BINDIR/asena-dpi-tray" 2>/dev/null || true
     setsid "$BINDIR/asena-dpi-tray" >/dev/null 2>&1 < /dev/null &
-    say "Tray başlatıldı (sistem tepsisinde kalkan ikonu)."
 fi
 
-say "KURULUM TAMAM ✅"
-echo
-echo "  • Tray sistem tepsisinde — SOL tık = aç/kapat, SAĞ tık = menü"
-echo "  • En iyi strateji (opsiyonel): sudo asena-dpi-optimize"
-echo "  • Elle: sudo asena-dpi-on / sudo asena-dpi-off"
+echo ""
+if [ -x "$GUM_BIN" ]; then
+    "$GUM_BIN" style --foreground 212 --border-foreground 212 --border normal --align left --width 60 --margin "1 2" --padding "1 2" "Kurulum Tamamlandi!" "Tray sistem tepsisinde baslatildi." "En iyi strateji icin: sudo asena-dpi-optimize"
+else
+    say "KURULUM TAMAM"
+fi
