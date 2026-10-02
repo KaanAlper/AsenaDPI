@@ -257,33 +257,38 @@ cd AsenaDPI && ./uninstall.sh
 
 Windows uses zapret's **`winws.exe`** (WinDivert driver) instead of `nftables` — same desync
 engine, generally stronger than GoodbyeDPI — plus native **DoH** (Windows 11) for DNS poisoning,
-and the same PySide6 tray. blockcheck runs from the bundled zapret Windows tools.
+and the same tray. blockcheck runs from the bundled zapret Windows tools.
 
 Windows'ta `nftables` yerine zapret'in **`winws.exe`**'i (WinDivert sürücüsü) kullanılır — aynı
 desync motoru, GoodbyeDPI'dan genelde daha güçlü — artı DNS zehri için native **DoH** (Windows 11)
-ve aynı PySide6 tray. blockcheck, pakete gömülü zapret Windows araçlarından çalışır.
+ve aynı tray. blockcheck, pakete gömülü zapret Windows araçlarından çalışır.
 
-**One command** (normal PowerShell — the installer requests its own admin/UAC):
+**Download / İndir:** [**AsenaDPI-Setup.exe**](https://github.com/KaanAlper/AsenaDPI/releases/latest/download/AsenaDPI-Setup.exe)
+— double-click, accept UAC, done. / çift tıkla, UAC'yi onayla, bitti.
+
+Or one command (normal PowerShell) / ya da tek komut:
 
 ```powershell
 irm https://raw.githubusercontent.com/KaanAlper/AsenaDPI/master/windows/get.ps1 | iex
 ```
 
-<sub>Or manually: `git clone https://github.com/KaanAlper/AsenaDPI.git; cd AsenaDPI\windows;
-Set-ExecutionPolicy -Scope Process Bypass -Force; .\install.ps1` (in an **admin** PowerShell).</sub>
+The setup is **self-contained** — no Python, pip or git, and no downloads during install (zapret
+`winws` + WinDivert + blockcheck are inside), so it works even when DPI breaks PyPI/GitHub.
+It registers the tray to start **elevated at logon** (scheduled task — no repeated UAC), adds a
+Start-menu entry (+ optional desktop shortcut) and an uninstaller that restores your DNS.
+**Update** from the tray (Diğer › Güncelle) — it fetches the latest release and installs silently.
 
-The installer sets everything up and **starts the tray automatically**; on later boots it autostarts
-elevated (no UAC). A Start-menu entry and desktop shortcut (search "AsenaDPI") are created too.
-
-`install.ps1` downloads the zapret Windows bundle (`winws.exe` + WinDivert + blockcheck), installs
-the tray, and registers it to start **elevated at logon** (a scheduled task — no repeated UAC), so
-the tray manages `winws` and DoH directly. Left-click = settings, right-click = menu, same as Linux.
+Kurulum **kendi kendine yeter** — Python, pip, git yok; kurulum sırasında indirme yok (winws +
+WinDivert + blockcheck içinde), DPI PyPI/GitHub'ı kesse bile kurulur. Tray oturum açılışında
+**yönetici olarak** başlar (UAC sormaz), Başlat menüsüne eklenir; kaldırıcı DNS'i geri alır.
+**Güncelleme** tray'den (Diğer › Güncelle): son sürümü indirip sessizce kurar.
 
 > [!NOTE]
-> Native DoH needs **Windows 11** (Windows 10 has no built-in DoH). Requires Python 3 + PySide6
-> (the installer fetches them via winget/pip if missing). This is a fresh v1 — report anything that
-> breaks. / Native DoH **Windows 11** ister; Python 3 + PySide6 gerekir (installer winget/pip ile
-> kurar). Yeni v1 — bozulan olursa bildir.
+> Native DoH needs **Windows 11** (Windows 10 has no built-in DoH), x64 only. Releases are built by
+> GitHub Actions from this repo (`.github/workflows/windows-release.yml`); a `.sha256` is attached.
+> / Native DoH **Windows 11** ister, yalnız x64. Release'ler bu repodan GitHub Actions ile derlenir.
+
+<sub>Maintainers: `git tag vX.Y.Z && git push origin vX.Y.Z` builds and publishes the Setup.</sub>
 
 ---
 

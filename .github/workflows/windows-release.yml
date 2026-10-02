@@ -1,0 +1,108 @@
+# Windows: AsenaDPI-Setup.exe derle (PyInstaller onedir + zapret-win-bundle + Inno Setup).
+# v* tag push -> GitHub Release'e eklenir (tray'in 'Guncelle'si ve get.ps1 buradan indirir).
+# Elle calistirma (workflow_dispatch) -> sadece artifact.
+name: windows-release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Surum
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $v = $env:GITHUB_REF_NAME.TrimStart('v')
+            if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Tag 'vX.Y.Z' olmali, gelen: $env:GITHUB_REF_NAME" }
+          } else {
+            $v = "0.0.$env:GITHUB_RUN_NUMBER"
+          }
+          "APP_VERSION=$v" >> $env:GITHUB_ENV
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bagimliliklar
+        run: python -m pip install --upgrade pip "pyinstaller>=6.10,<7" "pyside6-essentials>=6.7,<7"
+
+      - name: Surumu koda damgala
+        run: |
+          $f = "windows/asena-dpi-tray.pyw"
+          $src = Get-Content $f -Raw -Encoding utf8
+          $new = $src -replace '(?m)^APP_VERSION = "dev"', "APP_VERSION = `"$env:APP_VERSION`""
+          if ($new -eq $src) { throw "APP_VERSION satiri bulunamadi" }
+          [IO.File]::WriteAllText((Resolve-Path $f), $new, [Text.UTF8Encoding]::new($false))
+
+      - name: PyInstaller (onedir)
+        run: |
+          pyinstaller --noconfirm --clean --windowed --onedir --name AsenaDPI `
+            --icon windows/asena-dpi.ico `
+            --exclude-module tkinter --exclude-module unittest --exclude-module pydoc `
+            windows/asena-dpi-tray.pyw
+          # Widget uygulamasi icin gereksiz: yazilim OpenGL (~20 MB) + Qt ceviri dosyalari
+          Get-ChildItem dist/AsenaDPI -Recurse -Include opengl32sw.dll | Remove-Item -Force
+          Get-ChildItem dist/AsenaDPI -Recurse -Directory -Filter translations | Remove-Item -Recurse -Force
+          "{0:N1} MB" -f ((Get-ChildItem dist/AsenaDPI -Recurse -File | Measure-Object Length -Sum).Sum / 1MB)
+
+      - name: Exe acilis testi
+        run: |
+          $out = "$env:RUNNER_TEMP\selftest.txt"
+          $p = Start-Process dist/AsenaDPI/AsenaDPI.exe -ArgumentList "--selftest", "`"$out`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $out)) { throw "selftest basarisiz (exit $($p.ExitCode))" }
+          $got = Get-Content $out
+          if ($got -ne "ok $env:APP_VERSION") { throw "selftest beklenmeyen cikti: $got" }
+          "selftest: $got"
+
+      - name: zapret-win-bundle
+        run: |
+          git clone --depth 1 https://github.com/bol-van/zapret-win-bundle build/zapret-win-bundle
+          git -C build/zapret-win-bundle log -1 --format="bundle commit: %H %cd"
+          # blockcheck ('En iyi ayar') + baglanti icin SART dosyalar; eksikse build kirilsin
+          $need = @(
+            "zapret-winws/winws.exe", "zapret-winws/WinDivert64.sys", "zapret-winws/WinDivert.dll",
+            "cygwin/bin/bash.exe", "blockcheck/zapret/blockcheck.sh",
+            "blockcheck/zapret/nfq/winws.exe", "blockcheck/zapret/mdig/mdig.exe",
+            "blockcheck/zapret/ip2net/ip2net.exe"
+          )
+          $miss = $need | Where-Object { -not (Test-Path "build/zapret-win-bundle/$_") }
+          if ($miss) { throw "bundle'da eksik: $($miss -join ', ')" }
+
+      - name: Inno Setup
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress | Out-Null
+          }
+          & $iscc "/DAppVersion=$env:APP_VERSION" "/DBundleDir=$PWD\build\zapret-win-bundle" windows\installer.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC exit $LASTEXITCODE" }
+          $h = (Get-FileHash dist/AsenaDPI-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          "$h  AsenaDPI-Setup.exe" | Set-Content dist/AsenaDPI-Setup.exe.sha256 -Encoding ascii
+          "{0:N1} MB  sha256=$h" -f ((Get-Item dist/AsenaDPI-Setup.exe).Length / 1MB)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AsenaDPI-Setup-${{ env.APP_VERSION }}
+          path: |
+            dist/AsenaDPI-Setup.exe
+            dist/AsenaDPI-Setup.exe.sha256
+
+      - name: GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/AsenaDPI-Setup.exe
+            dist/AsenaDPI-Setup.exe.sha256
+          generate_release_notes: true
