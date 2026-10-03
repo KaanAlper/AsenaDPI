@@ -618,6 +618,8 @@ try {
     }
 
     $exe = if ($App.Mode -eq 'setup') { Install-Setup $rel $file } else { Install-Zip $rel $file $autostart }
+    # the setup program knows its own version (a local setup exe has none in its name)
+    if ($App.Mode -eq 'setup') { $v = Get-Installed; if ($v) { $rel.Version = $v } }
     $committed = $true
     Log "installed $($rel.Version)"
     if (Test-Path -LiteralPath $backupDir) { Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue }
