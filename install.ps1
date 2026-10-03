@@ -381,7 +381,8 @@ function Get-InstallDir {
     if ($App.Mode -ne 'setup') { return $Dir }
     $e = Get-SetupEntry
     if (-not $e) { return $null }
-    if ($e.InstallLocation) { return $e.InstallLocation.TrimEnd('\') }
+    # some setup programs (Tauri's) store it in quotes
+    if ($e.InstallLocation) { return $e.InstallLocation.Trim('"').TrimEnd('\') }
     if ($e.DisplayIcon) { return (Split-Path (($e.DisplayIcon -split ',')[0].Trim('"'))) }
     return $null
 }
