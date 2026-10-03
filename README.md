@@ -269,8 +269,19 @@ ve aynı tray. blockcheck, pakete gömülü zapret Windows araçlarından çalı
 Or one command (normal PowerShell) / ya da tek komut:
 
 ```powershell
-irm https://raw.githubusercontent.com/KaanAlper/AsenaDPI/master/windows/get.ps1 | iex
+irm https://raw.githubusercontent.com/KaanAlper/AsenaDPI/master/install.ps1 | iex
 ```
+
+It downloads the latest `AsenaDPI-Setup.exe` with a progress bar, checks its SHA-256 and installs it
+silently (one UAC prompt). Run it again to **update**; to **uninstall** (or use Settings › Apps):
+/ Son `AsenaDPI-Setup.exe`'yi ilerleme çubuğuyla indirir, SHA-256'sını doğrular ve sessizce kurar
+(bir UAC onayı). **Güncellemek** için yeniden çalıştır; **kaldırmak** için (ya da Ayarlar › Uygulamalar):
+
+```powershell
+$env:ASENADPI_UNINSTALL = 1; irm https://raw.githubusercontent.com/KaanAlper/AsenaDPI/master/install.ps1 | iex
+```
+
+<sub>The old address `…/windows/get.ps1` still works and forwards here. / Eski `…/windows/get.ps1` adresi de çalışır, buraya yönlendirir.</sub>
 
 The setup is **self-contained** — no Python, pip or git, and no downloads during install (zapret
 `winws` + WinDivert + blockcheck are inside), so it works even when DPI breaks PyPI/GitHub.
@@ -285,10 +296,10 @@ WinDivert + blockcheck içinde), DPI PyPI/GitHub'ı kesse bile kurulur. Tray otu
 
 > [!NOTE]
 > Native DoH needs **Windows 11** (Windows 10 has no built-in DoH), x64 only. Releases are built by
-> GitHub Actions from this repo (`.github/workflows/windows-release.yml`); a `.sha256` is attached.
+> GitHub Actions from this repo (`.github/workflows/release.yml`); a `.sha256` is attached.
 > / Native DoH **Windows 11** ister, yalnız x64. Release'ler bu repodan GitHub Actions ile derlenir.
 
-<sub>Maintainers: `git tag vX.Y.Z && git push origin vX.Y.Z` builds and publishes the Setup.</sub>
+<sub>Maintainers: Actions › release › Run workflow builds and publishes the Setup; the version follows the commits since the last release (`feat:` minor, `fix:` patch, a `!` after the type or a breaking-change footer major; `bump` forces it). Local build: `pwsh ./windows/build.ps1 -Version 1.2.3`.</sub>
 
 ---
 
