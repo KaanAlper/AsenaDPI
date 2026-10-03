@@ -272,6 +272,9 @@ Or one command (normal PowerShell) / ya da tek komut:
 irm https://raw.githubusercontent.com/KaanAlper/AsenaDPI/master/install.ps1 | iex
 ```
 
+**Windowed setup:** [**AsenaDPI-Setup-x64.exe**](https://github.com/KaanAlper/AsenaDPI/releases/latest/download/AsenaDPI-Setup-x64.exe) ([AsenaDPI-Setup-x86.exe](https://github.com/KaanAlper/AsenaDPI/releases/latest/download/AsenaDPI-Setup-x86.exe) for 32-bit Windows) — the same install with buttons: language choice, progress, undo on cancel; when it is already installed it offers **Update / Repair / Uninstall**.
+/ **Pencereli kurulum:** [**AsenaDPI-Setup-x64.exe**](https://github.com/KaanAlper/AsenaDPI/releases/latest/download/AsenaDPI-Setup-x64.exe) (32-bit Windows için [AsenaDPI-Setup-x86.exe](https://github.com/KaanAlper/AsenaDPI/releases/latest/download/AsenaDPI-Setup-x86.exe)) — aynı kurulumu düğmelerle yapar: dil seçimi, ilerleme, iptal edince geri alma; kuruluysa **Güncelle / Onar / Kaldır** sunar.
+
 It downloads the latest `AsenaDPI-Setup.exe` with a progress bar, checks its SHA-256 and installs it
 silently (one UAC prompt). Run it again to **update**; to **uninstall** (or use Settings › Apps):
 / Son `AsenaDPI-Setup.exe`'yi ilerleme çubuğuyla indirir, SHA-256'sını doğrular ve sessizce kurar

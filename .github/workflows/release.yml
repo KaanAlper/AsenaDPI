@@ -58,6 +58,10 @@ jobs:
         shell: pwsh
         run: ./windows/build.ps1 -Version ${{ steps.v.outputs.ver }}
 
+      - name: Setup app (x64 / x86)
+        shell: pwsh
+        run: ./installer/gui/build.ps1 -Out dist
+
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
@@ -68,6 +72,10 @@ jobs:
           files: |
             dist/AsenaDPI-Setup.exe
             dist/AsenaDPI-Setup.exe.sha256
+            dist/AsenaDPI-Setup-x64.exe
+            dist/AsenaDPI-Setup-x64.exe.sha256
+            dist/AsenaDPI-Setup-x86.exe
+            dist/AsenaDPI-Setup-x86.exe.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
           draft: false

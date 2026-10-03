@@ -5,9 +5,9 @@ name: build
 on:
   push:
     branches: [master]
-    paths: ["windows/**", "config/**", "install.ps1", ".github/workflows/build.yml"]
+    paths: ["windows/**", "config/**", "install.ps1", "installer/**", ".github/workflows/build.yml"]
   pull_request:
-    paths: ["windows/**", "config/**", "install.ps1", ".github/workflows/build.yml"]
+    paths: ["windows/**", "config/**", "install.ps1", "installer/**", ".github/workflows/build.yml"]
   workflow_dispatch:
 
 permissions:
@@ -46,9 +46,19 @@ jobs:
           if (Test-Path $key) { throw 'uninstall left the Apps entry behind' }
           'install / uninstall ok'
 
+      # The windowed setup app (installer/gui): builds both exes, draws every page and proves it starts and talks to install.ps1
+      - name: Setup app - build x64 / x86, draw the pages, run install.ps1's uninstall through the window
+        shell: pwsh
+        run: |
+          ./installer/gui/build.ps1 -Out dist -Shots -Smoke uninstall
+
       - uses: actions/upload-artifact@v4
         with:
           name: AsenaDPI-Setup-0.0.${{ github.run_number }}
           path: |
             dist/AsenaDPI-Setup.exe
             dist/AsenaDPI-Setup.exe.sha256
+            dist/AsenaDPI-Setup-x64.exe
+            dist/AsenaDPI-Setup-x86.exe
+            dist/shots/*.png
+            dist/smoke/*
