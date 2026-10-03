@@ -1,0 +1,74 @@
+name: release
+
+# Actions > release > Run workflow. Surum, son surumden bu yana gelen commit'lerden hesaplanir
+# (semantic versioning, Logical Lunge ile ayni kural): "feat:" -> MINOR, "fix:" / "perf:" / digerleri -> PATCH,
+# "tip!:" ya da "BREAKING CHANGE: <aciklama>" -> MAJOR. "bump" ile seviye elle secilebilir.
+# Daha once kullanilmis bir etiket (basarisiz denemeler dahil) asla yeniden kullanilmaz.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version step: auto reads the commits (feat: minor, fix: patch, type!: or BREAKING CHANGE: major)"
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+        required: true
+      notes:
+        description: "Release notes (optional)"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute the next version
+        id: v
+        shell: pwsh
+        env:
+          BUMP: ${{ inputs.bump || 'auto' }}
+        run: |
+          $tags = @(git tag --list 'v*')
+          $last = $tags | Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]($_ -replace '^v', '') } -Descending | Select-Object -First 1
+          $commits = @()
+          if ($last) { $commits = @((git log "$last..HEAD" --format='%s%n%b%x1e') -join "`n" -split [char]0x1e) }
+          $ver = & ./tools/release-version.ps1 -BaseVersion '1.0.0' -Tags $tags -Commits $commits -Bump $env:BUMP
+          Write-Host "Last release: $last, step: $env:BUMP -> $ver"
+          "ver=$ver" >> $env:GITHUB_OUTPUT
+          "sha=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build AsenaDPI-Setup.exe
+        shell: pwsh
+        run: ./windows/build.ps1 -Version ${{ steps.v.outputs.ver }}
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.ver }}
+          target_commitish: ${{ steps.v.outputs.sha }}
+          name: AsenaDPI v${{ steps.v.outputs.ver }}
+          body: ${{ inputs.notes }}
+          files: |
+            dist/AsenaDPI-Setup.exe
+            dist/AsenaDPI-Setup.exe.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          draft: false
+          make_latest: "true"

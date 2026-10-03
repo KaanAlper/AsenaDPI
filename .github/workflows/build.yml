@@ -1,0 +1,54 @@
+# Windows: her push / PR'da AsenaDPI-Setup.exe derlenir (windows/build.ps1) ve install.ps1 ile
+# sessiz kurulum + kaldirma denenir. Surum yayimlamak icin: Actions > release.
+name: build
+
+on:
+  push:
+    branches: [master]
+    paths: ["windows/**", "config/**", "install.ps1", ".github/workflows/build.yml"]
+  pull_request:
+    paths: ["windows/**", "config/**", "install.ps1", ".github/workflows/build.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build AsenaDPI-Setup.exe
+        shell: pwsh
+        run: ./windows/build.ps1 -Version 0.0.${{ github.run_number }}
+
+      - name: install.ps1 - install, uninstall
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $key = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{9470A0DB-A82D-4627-B054-40BC61F0DBF3}_is1'
+          $env:ASENADPI_SOURCE = (Resolve-Path 'dist/AsenaDPI-Setup.exe').Path
+          $env:ASENADPI_DEFAULTS = '1'
+          ./install.ps1
+          $p = Get-ItemProperty $key -ErrorAction SilentlyContinue
+          if (-not $p) { throw 'not installed (no Apps entry)' }
+          if ($p.DisplayVersion -ne '0.0.${{ github.run_number }}') { throw "wrong version in Apps: $($p.DisplayVersion)" }
+          if (-not (Test-Path (Join-Path $p.InstallLocation 'AsenaDPI.exe'))) { throw 'AsenaDPI.exe missing' }
+          $env:ASENADPI_UNINSTALL = '1'
+          ./install.ps1
+          for ($i = 0; $i -lt 60 -and (Test-Path $key); $i++) { Start-Sleep 1 }
+          if (Test-Path $key) { throw 'uninstall left the Apps entry behind' }
+          'install / uninstall ok'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AsenaDPI-Setup-0.0.${{ github.run_number }}
+          path: |
+            dist/AsenaDPI-Setup.exe
+            dist/AsenaDPI-Setup.exe.sha256
