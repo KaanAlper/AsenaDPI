@@ -13,6 +13,7 @@ sudo rm -f /etc/sudoers.d/asena-dpi
 sudo rm -f /etc/NetworkManager/dispatcher.d/90-asena-dpi
 sudo rm -rf /usr/local/share/asena-dpi
 rm -f "$HOME/.config/autostart/asena-dpi-tray.desktop"
+rm -f "$HOME/.local/share/applications/asena-dpi-tray.desktop"
 
 echo
 echo "nfqws ($BINDIR/nfqws), ayarlar (~/.config/asena-dpi) ve blacklist DOKUNULMADI."

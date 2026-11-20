@@ -136,9 +136,9 @@ HTTP2=1
 HTTP3=bypass
 EOF
 
-# --- 7) autostart (tum masaustleri: XDG) ---
-say "Autostart (XDG .desktop) ..."
-mkdir -p "$HOME/.config/autostart"
+# --- 7) autostart + app menu (tum masaustleri: XDG) ---
+say "Autostart + Uygulama menusu (XDG .desktop) ..."
+mkdir -p "$HOME/.config/autostart" "$HOME/.local/share/applications"
 cat > "$HOME/.config/autostart/asena-dpi-tray.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -150,6 +150,18 @@ StartupWMClass=asena-dpi
 Terminal=false
 X-GNOME-Autostart-enabled=true
 EOF
+cat > "$HOME/.local/share/applications/asena-dpi-tray.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=AsenaDPI
+Comment=DPI/DNS bypass tray
+Exec=$BINDIR/asena-dpi-tray
+Icon=$CFG/asena-dpi.png
+StartupWMClass=asena-dpi
+Categories=Network;Utility;
+Terminal=false
+EOF
+update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 
 # --- 8) GNOME tray ikonu (GNOME legacy tray GOSTERMEZ -> AppIndicator uzantisi) ---
 DESKTOP="${XDG_CURRENT_DESKTOP:-}${DESKTOP_SESSION:-}"
